@@ -878,9 +878,9 @@ pub fn pkt_to_udp_payload(pkt: &RtpPkt) -> Vec<u8> {
         //udp_payload[12+i].write_u8::<BigEndian>(pkt.header.csrc[i]).unwrap();
     }
     for i in 0..pkt.payload.len() {
-        udp_payload[(12 + (pkt.header.cc as usize)) + i] = pkt.payload[i];
+        udp_payload[(12 + (pkt.header.cc as usize*4)) + i] = pkt.payload[i];
     }
-    let index:usize = 12 + (pkt.header.cc as usize) + pkt.payload.len();
+    let index:usize = 12 + (pkt.header.cc as usize*4) + pkt.payload.len();
     if pkt.header.padding != 0 {
         udp_payload[index] = 0;
     }
