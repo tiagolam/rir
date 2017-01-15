@@ -748,11 +748,12 @@ impl RtpSession {
     }
 
     pub fn read(&mut self, mut rtp_pkt: &mut RtpPkt) -> usize {
+        // TODO(tlam): What if we need to read more than 1500 bytes?
         let mut udp_payload = [0; 1500];
 
-        self.conn.recv_from(&mut udp_payload);
+        let (size, _) = self.conn.recv_from(&mut udp_payload).unwrap();
 
-        parse_pkt(udp_payload, rtp_pkt);
+        parse_pkt(&udp_payload[..size], rtp_pkt);
 
         let ssrc = rtp_pkt.header.ssrc;
 
@@ -775,7 +776,7 @@ impl RtpSession {
     }
 
     pub fn write(&mut self, rtp_pkt: &RtpPkt) -> usize {
-        let udp_payload:[u8; 1500] = pkt_to_udp_payload(rtp_pkt);
+        let udp_payload:Vec<u8> = pkt_to_udp_payload(rtp_pkt);
 
         self.rtcp_stream.sent_rtp(rtp_pkt.payload.len() as u32);
 
@@ -792,7 +793,7 @@ fn rtcp_pkt_get_size(rtcp_pkt: &RtcpPkt) -> usize {
     rtcp_pkt.size
 }
 
-pub fn parse_pkt(pkt: [u8;1500], rtp_pkt: &mut RtpPkt) {
+pub fn parse_pkt(pkt: &[u8], rtp_pkt: &mut RtpPkt) {
 
     let mut version:u8 = pkt[0] & 0xC0;
     version >>= 6;
@@ -857,10 +858,10 @@ pub fn parse_pkt(pkt: [u8;1500], rtp_pkt: &mut RtpPkt) {
     debug!("I was able to decode the following fields - version {}, padding {}, ext {}, cc {}, marker {}, payload_type {}, seq_number {}, timestamp {}, ssrc {}, csrc {:?}, rtp_pkt.payload {:?}", rtp_pkt.header.version, rtp_pkt.header.padding, rtp_pkt.header.ext, rtp_pkt.header.cc, rtp_pkt.header.marker, rtp_pkt.header.payload_type, rtp_pkt.header.seq_number, rtp_pkt.header.timestamp, rtp_pkt.header.ssrc, rtp_pkt.header.csrc, rtp_pkt.payload);
 }
 
-pub fn pkt_to_udp_payload(pkt: &RtpPkt) -> [u8; 1500] {
+pub fn pkt_to_udp_payload(pkt: &RtpPkt) -> Vec<u8> {
 
     // TODO(tlam): Derive the correct size
-    let mut udp_payload: [u8; 1500] = [0; 1500];
+    let mut udp_payload: Vec<u8> = vec![0; 12 + pkt.payload.len()];
     udp_payload[0] = pkt.header.version << 6;
     udp_payload[0] |= pkt.header.padding << 5;
     udp_payload[0] |= pkt.header.ext << 4;
