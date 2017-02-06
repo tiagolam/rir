@@ -24,7 +24,8 @@ fn test_sending() {
     log4rs::init_file("config/log4rs.yaml", Default::default()).unwrap();
     info!("Running the send only test...");
 
-    let mut rtp_stream = RtpSession::connect_to(conn.unwrap(), SocketAddr::new(local_addr, 32000));
+    // Change 32000 port to point to the RTP port on the receiving side
+    let rtp_stream = RtpSession::connect_to(conn.unwrap(), SocketAddr::new(local_addr, 32000));
 
     let v = vec![];
 
@@ -84,7 +85,7 @@ fn test_receiving() {
     log4rs::init_file("config/log4rs.yaml", Default::default()).unwrap();
     info!("Firing up!...");
 
-    let mut rtp_stream = RtpSession::connect_to(conn.unwrap(), SocketAddr::new(local_addr, 32000));
+    let rtp_stream = RtpSession::connect_to(conn.unwrap(), SocketAddr::new(local_addr, 32000));
 
     let rtp_pkt = &mut RtpPkt {
         header: RtpHeader {

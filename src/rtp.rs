@@ -180,15 +180,15 @@ pub struct RtcpStream {
     // Estimated number of session members at the time `tn` was last computed
     pmembers: u32,
     // Most current estimate for the number of session members
-    members: u32,
+    members: Arc<Mutex<u32>>,
     // Most current estimate for the number of senders in a session
-    senders: u32,
+    senders: Arc<Mutex<u32>>,
     // Target RTCP bandwidth, i.e., the total bandwidth that will be used for
     // RTCP packets by all members of this session, in octets per second
     rtcp_bw: u32,
     // `True` if application has sent data since the 2nd previous RTCP report
     // was transmitted
-    we_sent: bool,
+    we_sent: Arc<Mutex<bool>>,
     // Average compound RTCP packet size, in octets, over all RTCP packets sent
     // and received by this participant
     avg_rtcp_size: Arc<Mutex<usize>>,
@@ -204,8 +204,8 @@ pub struct RtcpStream {
     tx_timer: Arc<Mutex<Timer>>,
     // TODO(tlam): This is probably best saved as the RTP session state, instead
     // of RTCP state
-    packet_count: u32,
-    byte_count: u32,
+    packet_count: Arc<Mutex<u32>>,
+    byte_count: Arc<Mutex<u32>>,
 }
 
 impl RtcpStream {
@@ -225,11 +225,11 @@ impl RtcpStream {
             tc: 0,
             tn: 0,
             pmembers: 1,
-            members: 1,
-            senders: 0,
+            members: Arc::new(Mutex::new(1)),
+            senders: Arc::new(Mutex::new(0)),
             // TODO(tlam): Set this to a fraction of available bw
             rtcp_bw: 40000,
-            we_sent: false,
+            we_sent: Arc::new(Mutex::new(false)),
             // TODO(tlam): Set this to the probable size of the first RTCP
             // later constructed
             avg_rtcp_size: Arc::new(Mutex::new(100)),
@@ -238,8 +238,8 @@ impl RtcpStream {
             senders_table: Arc::new(Mutex::new(HashMap::new())),
             unauth_table: Arc::new(Mutex::new(HashMap::new())),
             tx_timer: Arc::new(Mutex::new(Timer::new())),
-            packet_count: 0,
-            byte_count: 0,
+            packet_count: Arc::new(Mutex::new(0)),
+            byte_count: Arc::new(Mutex::new(0)),
         };
 
         rtcp_stream.init_read_thread();
@@ -278,7 +278,7 @@ impl RtcpStream {
             self.schedule_timer(tn - tc);
         }
 
-        self.pmembers = self.members;
+        self.pmembers = *self.members.lock().unwrap();
 
         self.check_members_timeout();
         self.check_senders_timeout();
@@ -312,7 +312,7 @@ impl RtcpStream {
     }
 
     pub fn compute_next_deterministic_tx_interval(&self, is_sender: bool) -> f64 {
-        let senders_ratio:f32 = (self.senders as f32) / (self.members as f32);
+        let senders_ratio:f32 = (*self.senders.lock().unwrap() as f32) / (*self.members.lock().unwrap() as f32);
         let mut const_c: f32;
         let mut n: f32;
 
@@ -323,15 +323,15 @@ impl RtcpStream {
             // This is a sender
             if is_sender {
                 const_c = (*self.avg_rtcp_size.lock().unwrap() as f32) / (0.25 * (self.rtcp_bw as f32));
-                n = self.senders as f32;
+                n = *self.senders.lock().unwrap() as f32;
             } else {
                 const_c = (*self.avg_rtcp_size.lock().unwrap() as f32) / (0.75 * (self.rtcp_bw as f32));
                 // Number of receivers
-                n = (self.members as f32) - (self.senders as f32);
+                n = (*self.members.lock().unwrap() as f32) - (*self.senders.lock().unwrap() as f32);
             }
         } else {
            const_c = (*self.avg_rtcp_size.lock().unwrap() as f32) / (self.rtcp_bw as f32);
-           n = self.members as f32;
+           n = *self.members.lock().unwrap() as f32;
         }
 
         // Step 2.
@@ -361,7 +361,7 @@ impl RtcpStream {
     // TODO(tlam): Deal with section 6.2 where an RTP profile may specify
     // different rtcp_bw for senders and receivers
     pub fn compute_next_tx_interval(&self) -> u64 {
-        let td = self.compute_next_deterministic_tx_interval(self.we_sent);
+        let td = self.compute_next_deterministic_tx_interval(*self.we_sent.lock().unwrap());
 
         // Step 4.
         let tmin = td * 0.5;
@@ -405,8 +405,8 @@ impl RtcpStream {
     // TODO(tlam): Check the validity of the member as described in 6.3.3
     // - like receiving multiple packets from them or having a CNAME
     // associated.
-    fn update_senders(&mut self, ssrc: u32) {
-        let mut senders_table = self.senders_table.lock().unwrap();
+    fn update_senders(&self, ssrc: u32) {
+        let ref mut senders_table = self.senders_table.lock().unwrap();
 
         if (*senders_table).contains_key(&ssrc) {
             info!("ssrc {} already exists in senders table, updated", ssrc);
@@ -415,12 +415,12 @@ impl RtcpStream {
         } else {
             // Assign current time.
             (*senders_table).insert(ssrc, RtcpStream::get_time_now());
-            self.senders += 1;
+            *self.senders.lock().unwrap() += 1;
         }
     }
 
-    fn update_members(&mut self, ssrc: u32) {
-        let mut members_table = self.members_table.lock().unwrap();
+    fn update_members(&self, ssrc: u32) {
+        let ref mut members_table = self.members_table.lock().unwrap();
         if (*members_table).contains_key(&ssrc) {
             info!("ssrc {} already exists in members table, updated", ssrc);
             (*members_table).insert(ssrc, RtcpStream::get_time_now());
@@ -428,13 +428,13 @@ impl RtcpStream {
         } else {
             // Assign current time.
             (*members_table).insert(ssrc, RtcpStream::get_time_now());
-            self.members += 1;
+            *self.members.lock().unwrap() += 1;
         }
 
         // TODO(tlam): Update avg_rtcp_size
     }
 
-    pub fn received_rtp(&mut self, rtp_pkt: &RtpPkt) {
+    pub fn received_rtp(&self, rtp_pkt: &RtpPkt) {
         self.update_members(rtp_pkt.header.ssrc);
         self.update_senders(rtp_pkt.header.ssrc);
 
@@ -465,11 +465,11 @@ impl RtcpStream {
         *ssrc_state.jitter.lock().unwrap() = jitter;
     }
 
-    pub fn sent_rtp(&mut self, rtp_pkt_size: u32) {
-        self.packet_count += 1;
-        self.byte_count += rtp_pkt_size;
+    pub fn sent_rtp(&self, rtp_pkt_size: u32) {
+        *self.packet_count.lock().unwrap() += 1;
+        *self.byte_count.lock().unwrap() += rtp_pkt_size;
 
-        self.we_sent = true;
+        *self.we_sent.lock().unwrap() = true;
     }
 
     pub fn received_non_bye_rtcp(&mut self, ssrc: u32) {
@@ -479,19 +479,19 @@ impl RtcpStream {
     pub fn received_bye_rtcp(&mut self, ssrc: u32) {
         let mut members_table = self.members_table.lock().unwrap();
         if (*members_table).remove(&ssrc) != None {
-            if self.members > 0 {
-                self.members -= 1;
+            if *self.members.lock().unwrap() > 0 {
+                *self.members.lock().unwrap() -= 1;
             }
         }
 
         let mut senders_table = self.senders_table.lock().unwrap();
         if (*senders_table).remove(&ssrc) != None {
-            if self.senders > 0 {
-                self.senders -= 1;
+            if *self.senders.lock().unwrap() > 0 {
+                *self.senders.lock().unwrap() -= 1;
             }
         }
     
-        if self.members < self.pmembers {
+        if *self.members.lock().unwrap() < self.pmembers {
             info!("pmembers < members, <should> execute the reverse consideration algorithm");
             // TODO(tlam): Implement reverse consideration algo in 6.3.4
         }
@@ -521,13 +521,13 @@ impl RtcpStream {
             let value = members_table.get(key);
             if *(value.unwrap()) < (last_call as u64) {
                 final_table.remove(key);
-                if self.members > 0 {
-                    self.members -= 1;
+                if *self.members.lock().unwrap() > 0 {
+                    *self.members.lock().unwrap() -= 1;
                 }
             }
         }
 
-        self.members = final_table.len() as u32;
+        *self.members.lock().unwrap() = final_table.len() as u32;
 
         self.members_table = Arc::new(Mutex::new(final_table));
         // TODO(tlam): If any member is removed, the reverse consideration
@@ -557,13 +557,13 @@ impl RtcpStream {
             let value = senders_table.get(key);
             if *(value.unwrap()) < (last_call as u64) {
                 final_table.remove(key);
-                if self.senders > 0 {
-                    self.senders -= 1;
+                if *self.senders.lock().unwrap() > 0 {
+                    *self.senders.lock().unwrap() -= 1;
                 }
             }
         }
 
-        self.senders = final_table.len() as u32;
+        *self.senders.lock().unwrap() = final_table.len() as u32;
 
         self.senders_table = Arc::new(Mutex::new(final_table));
     }
@@ -599,7 +599,7 @@ impl RtcpStream {
             size: 0,
         };
 
-        if self.we_sent {
+        if *self.we_sent.lock().unwrap() {
             rtcp_pkt.header.payload_type = 200;
             
             let ntp_timestamp = RtcpStream::get_ntp_timestamp();
@@ -608,8 +608,8 @@ impl RtcpStream {
                 ntp_timestamp_lsw: (ntp_timestamp & 0xFFFFFFFF) as u32,
                 // TODO(tlam): 
                 rtp_timestamp: 0,
-                sender_packet_count: self.packet_count,
-                sender_byte_count: self.byte_count,
+                sender_packet_count: *self.packet_count.lock().unwrap(),
+                sender_byte_count: *self.byte_count.lock().unwrap(),
             });
         }
 
@@ -747,7 +747,7 @@ impl RtpSession {
         }
     }
 
-    pub fn read(&mut self, mut rtp_pkt: &mut RtpPkt) -> usize {
+    pub fn read(&self, mut rtp_pkt: &mut RtpPkt) -> usize {
         // TODO(tlam): What if we need to read more than 1500 bytes?
         let mut udp_payload = [0; 1500];
 
@@ -758,7 +758,7 @@ impl RtpSession {
         let ssrc = rtp_pkt.header.ssrc;
 
         let valid: bool;
-        let ref mut rtcp_stream = self.rtcp_stream;
+        let ref rtcp_stream = self.rtcp_stream;
         {
             let ref mut unauth_table = rtcp_stream.unauth_table.lock().unwrap();
             let ssrc_state = unauth_table.entry(ssrc).or_insert(SourceState::new(rtp_pkt.header.seq_number));
@@ -775,7 +775,7 @@ impl RtpSession {
         }
     }
 
-    pub fn write(&mut self, rtp_pkt: &RtpPkt) -> usize {
+    pub fn write(&self, rtp_pkt: &RtpPkt) -> usize {
         let udp_payload:Vec<u8> = pkt_to_udp_payload(rtp_pkt);
 
         self.rtcp_stream.sent_rtp(rtp_pkt.payload.len() as u32);
