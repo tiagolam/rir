@@ -833,7 +833,7 @@ pub fn parse_pkt(pkt: &[u8], rtp_pkt: &mut RtpPkt) {
     }
 
     // Get payload
-    let payload = &pkt[12 + ((cc as usize)*4)..];
+    let payload = &pkt[((cc as usize)*4)..];
     if padding != 0 {
         let last_octet:usize = payload[payload.len() - 1] as usize;
         let (payload, _) = payload.split_at(payload.len() - last_octet);
@@ -851,7 +851,7 @@ pub fn parse_pkt(pkt: &[u8], rtp_pkt: &mut RtpPkt) {
     rtp_pkt.header.csrc = vec![];
     //rtp_pkt.payload.clone_from_slice(payload);
     rtp_pkt.payload = vec![];
-    for i in 0..payload.len()-1 {
+    for i in 0..payload.len() {
         rtp_pkt.payload.push(payload[i]);
     }
 
