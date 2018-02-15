@@ -20,7 +20,7 @@ use std::mem;
 use std::net::{SocketAddr, UdpSocket};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::sync::mpsc::channel;
+use std::sync::mpsc;
 use std::time::{Instant};
 use std::thread;
 
@@ -30,6 +30,11 @@ use rand::{thread_rng, Rng};
 use timer::Timer;
 use time::Duration;
 use time;
+use fibers::{Executor, InPlaceExecutor, Spawn};
+use rustun::server::UdpServer;
+use rustun::rfc5389::handlers::BindingHandler;
+
+use handlers;
 
 pub struct RtpHeader {
     pub version: u8,
@@ -52,9 +57,9 @@ pub struct RtpPkt {
 // TODO(tlam): Abstract away from UdpSocket, since the RFC doesn't tie to any
 // transport protocol (such as UDP)
 pub struct RtpSession {
-    pub conn: UdpSocket,
-    pub socket: SocketAddr,
+    transport: StunWrapper,
     rtcp_stream: RtcpStream,
+    //handler: Box<RirHandler + Send>
 }
 
 struct SourceState {
@@ -168,9 +173,7 @@ impl SourceState {
 #[derive(Clone)]
 pub struct RtcpStream {
     // RTCP stream socket connection 
-    local_socket: Arc<UdpSocket>,
-    // RTCP stream dest socket connection 
-    rem_socket: Arc<SocketAddr>,
+    transport: StunWrapper,
     // Last time an RTPC packet was transmitted
     tp: Arc<Mutex<u64>>,
     // Current time
@@ -208,19 +211,93 @@ pub struct RtcpStream {
     byte_count: Arc<Mutex<u32>>,
 }
 
+trait Transport {
+    fn recv(&self, payload: &mut [u8]) -> usize;
+
+    fn send(&self, payload: &[u8]) -> usize;
+}
+
+#[derive(Clone)]
+struct UdpTransport {
+     // RTCP stream socket connection
+    local_socket: Arc<UdpSocket>,
+    // RTCP stream dest socket connection
+    rem_socket: Arc<SocketAddr>,
+}
+
+impl UdpTransport {
+    fn new(local_addr: UdpSocket, rem_socket: SocketAddr) -> UdpTransport {
+        UdpTransport {
+            local_socket: Arc::new(local_addr),
+            rem_socket: Arc::new(rem_socket),
+        }
+    }
+
+}
+
+impl Transport for UdpTransport {
+    fn recv(&self, payload: &mut [u8]) -> usize {
+        let (size, _) = (*self.local_socket).recv_from(payload).unwrap();
+
+        size
+    }
+
+    fn send(&self, payload: &[u8]) -> usize {
+        (*self.local_socket).send_to(payload, (*self.rem_socket)).unwrap()
+    }
+}
+
+#[derive(Clone)]
+struct StunWrapper {
+    // Origin side of the channel
+    sender: mpsc::Sender<Vec<u8>>,
+    // Destination side of the channel
+    receiver: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>,
+    // Dest socket connection
+    transport: UdpTransport,
+}
+
+impl StunWrapper {
+
+    fn new(transport: UdpTransport) -> StunWrapper {
+        let (tx, rx) = mpsc::channel();
+
+        StunWrapper {
+            sender: tx,
+            receiver: Arc::new(Mutex::new(rx)),
+            transport: transport,
+        }
+    }
+
+    fn handle_non_stun(&self, payload: [u8; 1500]) {
+        let raw_msg = self.sender.send(payload.to_vec());
+    }
+}
+
+impl Transport for StunWrapper {
+
+    // Receive the packet that comes on the other side side of the channel
+    // and handle it
+    fn recv(&self, payload: &mut [u8]) -> usize {
+        let raw_msg = self.receiver.lock().unwrap().recv().unwrap();
+
+        payload[0..raw_msg.len()].clone_from_slice(&raw_msg);
+
+        debug!("Receiving {} from channel... {:?}", raw_msg.len(), &payload[0..raw_msg.len()]);
+
+        raw_msg.len()
+    }
+
+    fn send(&self, payload: &[u8]) -> usize {
+        self.transport.send(payload)
+    }
+}
+
 impl RtcpStream {
 
-    pub fn new(conn: &UdpSocket, socket_addr: &SocketAddr) -> RtcpStream {
-
-        let conn_ip = conn.local_addr().unwrap().ip();
-        let conn_port = conn.local_addr().unwrap().port() + 1;
-        let socket_ip = socket_addr.ip();
-        let socket_port = socket_addr.port() + 1/*49171*/;
-        debug!("rctp remote port {}", socket_port);
-
+    fn new(transport: StunWrapper) -> RtcpStream {
         let mut rtcp_stream = RtcpStream {
-            local_socket: Arc::new(UdpSocket::bind(SocketAddr::new(conn_ip, conn_port)).unwrap()),
-            rem_socket: Arc::new(SocketAddr::new(socket_ip, socket_port)),
+            transport: transport,
             tp: Arc::new(Mutex::new(0)),
             tc: 0,
             tn: 0,
@@ -261,8 +338,6 @@ impl RtcpStream {
             // TODO(tlam): Transmit new RTCP
             self.process_rtcp_write();
 
-            info!("This is where the RTCP should have been transmitted from {:?} to {:?}", self.local_socket, self.rem_socket);
-
             *self.tp.lock().unwrap() = self.tc;
 
             self.initial = false;
@@ -285,7 +360,7 @@ impl RtcpStream {
     }
 
     pub fn schedule_timer(&mut self, t: u64) {
-        let (tx, rx) = channel();
+        let (tx, rx) = mpsc::channel();
         //self.callback = Some(Box::new(|| self.x()));
         //let arc = Arc::new(self.callback);
         //let this = Arc::new(Mutex::new(self));
@@ -446,7 +521,8 @@ impl RtcpStream {
         let time = RtcpStream::get_time_now();
         debug!("Time now is {}", time);
 
-        let transit = (time as u32) - rtp_pkt.header.timestamp; 
+        //let transit = (time as u32) - rtp_pkt.header.timestamp;
+        let transit = 0;
 
         // TODO(tlam): Is it correct this? Shifting u32 to i32?
         let mut d:i32 = (transit as i32) - (ssrc_state.transit as i32);
@@ -572,9 +648,9 @@ impl RtcpStream {
     fn read(&self, mut rtcp_pkt: &mut RtcpPkt) -> usize {
         let mut udp_payload = [0; 1500];
 
-        let (size, _) = (*self.local_socket).recv_from(&mut udp_payload).unwrap();
+        let size = self.transport.recv(&mut udp_payload);
 
-        parse_rtcp_pkt(udp_payload, rtcp_pkt);
+        parse_rtcp_pkt(&udp_payload, rtcp_pkt);
 
         rtcp_pkt.size = size;
 
@@ -676,7 +752,7 @@ impl RtcpStream {
     fn write(&self, rtcp_pkt: &mut RtcpPkt) -> usize {
         let udp_payload:[u8; 1500] = pkt_rtcp_to_udp_payload(rtcp_pkt);
 
-        let size = (*self.local_socket).send_to(&udp_payload, *self.rem_socket).unwrap();
+        let size = self.transport.send(&udp_payload);
 
         rtcp_pkt.size = size;
 
@@ -736,14 +812,64 @@ impl RtcpStream {
     }
 }
 
-impl RtpSession {
+pub trait RirHandler {
+    fn handle_event(&self, handlers::CallbackType);
+}
 
-    pub fn connect_to(conn: UdpSocket, socket_addr: SocketAddr) -> RtpSession {
+pub fn fake_callback(callback_type: handlers::CallbackType) {
+}
+
+impl RtpSession {
+    pub fn change_transport(&mut self, new_addr: SocketAddr) {
+        self.transport.transport.rem_socket = Arc::new(new_addr);
+    }
+
+    pub fn change_rtcp_transport(&mut self, new_addr: SocketAddr) {
+        self.rtcp_stream.transport.transport.rem_socket = Arc::new(new_addr);
+    }
+
+    pub fn connect_to(rtp_conn: UdpSocket, rtcp_conn: UdpSocket, socket_addr: SocketAddr, rtp_cb: Box<RirHandler + Send>, rtcp_cb: Box<RirHandler + Send>) -> RtpSession {
+        let rtp_clone = rtp_conn.try_clone().unwrap();
+
+        debug!("Setting up STUN for RTP {}:{}", rtp_conn.local_addr().unwrap().ip(), rtp_conn.local_addr().unwrap().port());
+
+        // Build transport based on
+        let transport = UdpTransport::new(rtp_conn, socket_addr);
+        let stun_wrapper = StunWrapper::new(transport);
+
+        let fn_pointer:Box<Fn(handlers::CallbackType) + Send> = Box::new(fake_callback);
+
+        let mut executor = InPlaceExecutor::new().unwrap();
+        let spawner = executor.handle();
+        let monitor = executor.spawn_monitor(UdpServer::new(rtp_clone)
+                              .start(spawner.boxed(), handlers::RtpHandler::new("T0teqPLNQQOf+5W+ls+P2p16".to_string(), stun_wrapper.sender.clone(), rtp_cb)));
+        thread::spawn(move || {
+            let result = executor.run_fiber(monitor).unwrap();
+        });
+
+        debug!("Setting up STUN for RTCP {}:{}", rtcp_conn.local_addr().unwrap().ip(), rtcp_conn.local_addr().unwrap().port());
+
+        // TODO(tlam): Should we be assuming port+1 for RTCP initially?
+        let socket_ip = socket_addr.ip();
+        let socket_port = socket_addr.port() + 1;
+        let rem_socket = SocketAddr::new(socket_ip, socket_port);
+
+        let rtcp_clone = rtcp_conn.try_clone().unwrap();
+        let rtcp_transport = UdpTransport::new(rtcp_conn, rem_socket);
+        let rtcp_wrapper = StunWrapper::new(rtcp_transport);
+
+        let mut executor = InPlaceExecutor::new().unwrap();
+        let spawner = executor.handle();
+        let monitor = executor.spawn_monitor(UdpServer::new(rtcp_clone)
+                              .start(spawner.boxed(), handlers::RtpHandler::new("T0teqPLNQQOf+5W+ls+P2p16".to_string(), rtcp_wrapper.sender.clone(), rtcp_cb)));
+        thread::spawn(move || {
+            let result = executor.run_fiber(monitor).unwrap();
+        });
 
         RtpSession {
-            rtcp_stream: RtcpStream::new(&conn, &socket_addr),
-            conn: conn,
-            socket: socket_addr,
+            rtcp_stream: RtcpStream::new(rtcp_wrapper),
+            transport: stun_wrapper,
+            //handler: callback,
         }
     }
 
@@ -751,7 +877,7 @@ impl RtpSession {
         // TODO(tlam): What if we need to read more than 1500 bytes?
         let mut udp_payload = [0; 1500];
 
-        let (size, _) = self.conn.recv_from(&mut udp_payload).unwrap();
+        let size = self.transport.recv(&mut udp_payload);
 
         parse_pkt(&udp_payload[..size], rtp_pkt);
 
@@ -778,9 +904,13 @@ impl RtpSession {
     pub fn write(&self, rtp_pkt: &RtpPkt) -> usize {
         let udp_payload:Vec<u8> = pkt_to_udp_payload(rtp_pkt);
 
+        self.transport.send(&udp_payload);
+
         self.rtcp_stream.sent_rtp(rtp_pkt.payload.len() as u32);
 
-        self.conn.send_to(&udp_payload, self.socket).unwrap()
+        debug!("Writing RTP of size {}... {:?}", udp_payload.len(), &udp_payload[0..udp_payload.len()]);
+
+        udp_payload.len()
     }
 }
 
@@ -815,7 +945,6 @@ pub fn parse_pkt(pkt: &[u8], rtp_pkt: &mut RtpPkt) {
     /*let mut buf = Cursor::new(&[pkt[4], pkt[5], pkt[6], pkt[7]]);
     let timestamp = buf.read_u32::<BigEndian>().unwrap();*/
     let timestamp = BigEndian::read_u32(&[pkt[4], pkt[5], pkt[6], pkt[7]]);
-
     /*let mut buf = Cursor::new(&[pkt[8], pkt[9], pkt[10], pkt[11]]);
     let ssrc = buf.read_u32::<BigEndian>().unwrap();*/
     let ssrc = BigEndian::read_u32(&[pkt[8], pkt[9], pkt[10], pkt[11]]);
@@ -980,7 +1109,7 @@ pub fn pkt_rtcp_to_udp_payload(pkt: &RtcpPkt) -> [u8; 1500] {
     udp_payload
 }
 
-pub fn parse_rtcp_pkt(pkt: [u8;1500], rtcp_pkt: &mut RtcpPkt) {
+pub fn parse_rtcp_pkt(pkt: &[u8], rtcp_pkt: &mut RtcpPkt) {
 
     let mut version:u8 = pkt[0] & 0xC0;
     version >>= 6;
