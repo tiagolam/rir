@@ -14,7 +14,7 @@ use rtp::RirHandler;
 /// A `HandleMessage` implementation which only handle `Binding` method.
 pub struct RtpHandler {
     passwd: String,
-    relay: mpsc::Sender<Vec<u8>>,
+    relay: Arc<Mutex<mpsc::Sender<Vec<u8>>>>,
     use_candidate: Box<RirHandler + Send>,
 }
 
@@ -25,7 +25,7 @@ pub enum CallbackType {
 
 impl RtpHandler {
     /// Makes a new `RtpHandler` instance.
-    pub fn new(passwd: String, relay: mpsc::Sender<Vec<u8>>, callback: Box<RirHandler + Send>) -> Self {
+    pub fn new(passwd: String, relay: Arc<Mutex<mpsc::Sender<Vec<u8>>>>, callback: Box<RirHandler + Send>) -> Self {
         RtpHandler {
             passwd: passwd,
             relay: relay,
@@ -82,7 +82,7 @@ impl HandleMessage for RtpHandler {
                 tmp_buf.clone_from_slice(&buf);
 
                 println!("Caught discard error from the client {}: {:?}", client, tmp_buf);
-                self.relay.send(tmp_buf).unwrap();
+                self.relay.lock().unwrap().send(tmp_buf).unwrap();
 
                 println!("After sending...");
             },

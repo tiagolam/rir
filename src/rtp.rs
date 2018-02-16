@@ -19,7 +19,7 @@ use std::io::{Cursor};
 use std::mem;
 use std::net::{SocketAddr, UdpSocket};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::sync::mpsc;
 use std::time::{Instant};
 use std::thread;
@@ -220,16 +220,16 @@ trait Transport {
 #[derive(Clone)]
 struct UdpTransport {
      // RTCP stream socket connection
-    local_socket: Arc<UdpSocket>,
+    local_socket: Arc<RwLock<UdpSocket>>,
     // RTCP stream dest socket connection
-    rem_socket: Arc<SocketAddr>,
+    rem_socket: Arc<RwLock<SocketAddr>>,
 }
 
 impl UdpTransport {
     fn new(local_addr: UdpSocket, rem_socket: SocketAddr) -> UdpTransport {
         UdpTransport {
-            local_socket: Arc::new(local_addr),
-            rem_socket: Arc::new(rem_socket),
+            local_socket: Arc::new(RwLock::new(local_addr)),
+            rem_socket: Arc::new(RwLock::new(rem_socket)),
         }
     }
 
@@ -237,20 +237,21 @@ impl UdpTransport {
 
 impl Transport for UdpTransport {
     fn recv(&self, payload: &mut [u8]) -> usize {
-        let (size, _) = (*self.local_socket).recv_from(payload).unwrap();
+        let (size, _) = self.local_socket.read().unwrap().recv_from(payload).unwrap();
 
         size
     }
 
     fn send(&self, payload: &[u8]) -> usize {
-        (*self.local_socket).send_to(payload, (*self.rem_socket)).unwrap()
+        let lsock = self.local_socket.read().unwrap();
+        lsock.send_to(payload, *(self.rem_socket.read().unwrap())).unwrap()
     }
 }
 
 #[derive(Clone)]
 struct StunWrapper {
     // Origin side of the channel
-    sender: mpsc::Sender<Vec<u8>>,
+    sender: Arc<Mutex<mpsc::Sender<Vec<u8>>>>,
     // Destination side of the channel
     receiver: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>,
     // Dest socket connection
@@ -263,14 +264,14 @@ impl StunWrapper {
         let (tx, rx) = mpsc::channel();
 
         StunWrapper {
-            sender: tx,
+            sender: Arc::new(Mutex::new(tx)),
             receiver: Arc::new(Mutex::new(rx)),
             transport: transport,
         }
     }
 
     fn handle_non_stun(&self, payload: [u8; 1500]) {
-        let raw_msg = self.sender.send(payload.to_vec());
+        let raw_msg = self.sender.lock().unwrap().send(payload.to_vec());
     }
 }
 
@@ -820,12 +821,14 @@ pub fn fake_callback(callback_type: handlers::CallbackType) {
 }
 
 impl RtpSession {
-    pub fn change_transport(&mut self, new_addr: SocketAddr) {
-        self.transport.transport.rem_socket = Arc::new(new_addr);
+    pub fn change_transport(&self, new_addr: SocketAddr) {
+        let mut rsock = self.transport.transport.rem_socket.write().unwrap();
+        *rsock = new_addr;
     }
 
-    pub fn change_rtcp_transport(&mut self, new_addr: SocketAddr) {
-        self.rtcp_stream.transport.transport.rem_socket = Arc::new(new_addr);
+    pub fn change_rtcp_transport(&self, new_addr: SocketAddr) {
+        let mut rsock = self.rtcp_stream.transport.transport.rem_socket.write().unwrap();
+        *rsock = new_addr;
     }
 
     pub fn connect_to(rtp_conn: UdpSocket, rtcp_conn: UdpSocket, socket_addr: SocketAddr, rtp_cb: Box<RirHandler + Send>, rtcp_cb: Box<RirHandler + Send>) -> RtpSession {
