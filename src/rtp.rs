@@ -237,14 +237,17 @@ impl UdpTransport {
 
 impl Transport for UdpTransport {
     fn recv(&self, payload: &mut [u8]) -> usize {
-        let (size, _) = self.local_socket.read().unwrap().recv_from(payload).unwrap();
+        let lsock = self.local_socket.read().unwrap();
+        let (size, _) = lsock.recv_from(payload).unwrap();
 
         size
     }
 
     fn send(&self, payload: &[u8]) -> usize {
         let lsock = self.local_socket.read().unwrap();
-        lsock.send_to(payload, *(self.rem_socket.read().unwrap())).unwrap()
+        let size = lsock.send_to(payload, *(self.rem_socket.read().unwrap())).unwrap();
+
+        size
     }
 }
 
@@ -831,10 +834,11 @@ impl RtpSession {
         *rsock = new_addr;
     }
 
-    pub fn connect_to(rtp_conn: UdpSocket, rtcp_conn: UdpSocket, socket_addr: SocketAddr, rtp_cb: Box<RirHandler + Send>, rtcp_cb: Box<RirHandler + Send>) -> RtpSession {
-        let rtp_clone = rtp_conn.try_clone().unwrap();
+    pub fn connect_to(rtp_addr: SocketAddr, rtcp_addr: SocketAddr, socket_addr: SocketAddr, rtp_cb: Box<RirHandler + Send>, rtcp_cb: Box<RirHandler + Send>) -> RtpSession {
+        debug!("Setting up STUN for RTP {}:{}", rtp_addr.ip(), rtp_addr.port());
 
-        debug!("Setting up STUN for RTP {}:{}", rtp_conn.local_addr().unwrap().ip(), rtp_conn.local_addr().unwrap().port());
+        let rtp_conn = UdpSocket::bind(rtp_addr).unwrap();
+        let rtp_clone = rtp_conn.try_clone().unwrap();
 
         // Build transport based on
         let transport = UdpTransport::new(rtp_conn, socket_addr);
@@ -844,26 +848,28 @@ impl RtpSession {
 
         let mut executor = InPlaceExecutor::new().unwrap();
         let spawner = executor.handle();
-        let monitor = executor.spawn_monitor(UdpServer::new(rtp_clone)
-                              .start(spawner.boxed(), handlers::RtpHandler::new("T0teqPLNQQOf+5W+ls+P2p16".to_string(), stun_wrapper.sender.clone(), rtp_cb)));
+        let monitor = executor.spawn_monitor(UdpServer::with_socket(rtp_clone)
+                               .start(spawner.boxed(), handlers::RtpHandler::new("T0teqPLNQQOf+5W+ls+P2p16".to_string(), stun_wrapper.sender.clone(), rtp_cb)));
         thread::spawn(move || {
             let result = executor.run_fiber(monitor).unwrap();
         });
 
-        debug!("Setting up STUN for RTCP {}:{}", rtcp_conn.local_addr().unwrap().ip(), rtcp_conn.local_addr().unwrap().port());
+        debug!("Setting up STUN for RTCP {}:{}", rtcp_addr.ip(), rtcp_addr.port());
 
         // TODO(tlam): Should we be assuming port+1 for RTCP initially?
         let socket_ip = socket_addr.ip();
         let socket_port = socket_addr.port() + 1;
         let rem_socket = SocketAddr::new(socket_ip, socket_port);
 
+        let rtcp_conn = UdpSocket::bind(rtcp_addr).unwrap();
         let rtcp_clone = rtcp_conn.try_clone().unwrap();
+
         let rtcp_transport = UdpTransport::new(rtcp_conn, rem_socket);
         let rtcp_wrapper = StunWrapper::new(rtcp_transport);
 
         let mut executor = InPlaceExecutor::new().unwrap();
         let spawner = executor.handle();
-        let monitor = executor.spawn_monitor(UdpServer::new(rtcp_clone)
+        let monitor = executor.spawn_monitor(UdpServer::with_socket(rtcp_clone)
                               .start(spawner.boxed(), handlers::RtpHandler::new("T0teqPLNQQOf+5W+ls+P2p16".to_string(), rtcp_wrapper.sender.clone(), rtcp_cb)));
         thread::spawn(move || {
             let result = executor.run_fiber(monitor).unwrap();
