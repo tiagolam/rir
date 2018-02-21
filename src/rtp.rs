@@ -30,9 +30,6 @@ use rand::{thread_rng, Rng};
 use timer::Timer;
 use time::Duration;
 use time;
-use fibers::{Executor, InPlaceExecutor, Spawn};
-use rustun::server::UdpServer;
-use rustun::rfc5389::handlers::BindingHandler;
 
 use handlers;
 
@@ -846,14 +843,6 @@ impl RtpSession {
 
         let fn_pointer:Box<Fn(handlers::CallbackType) + Send> = Box::new(fake_callback);
 
-        let mut executor = InPlaceExecutor::new().unwrap();
-        let spawner = executor.handle();
-        let monitor = executor.spawn_monitor(UdpServer::with_socket(rtp_clone)
-                               .start(spawner.boxed(), handlers::RtpHandler::new("T0teqPLNQQOf+5W+ls+P2p16".to_string(), stun_wrapper.sender.clone(), rtp_cb)));
-        thread::spawn(move || {
-            let result = executor.run_fiber(monitor).unwrap();
-        });
-
         debug!("Setting up STUN for RTCP {}:{}", rtcp_addr.ip(), rtcp_addr.port());
 
         // TODO(tlam): Should we be assuming port+1 for RTCP initially?
@@ -866,14 +855,6 @@ impl RtpSession {
 
         let rtcp_transport = UdpTransport::new(rtcp_conn, rem_socket);
         let rtcp_wrapper = StunWrapper::new(rtcp_transport);
-
-        let mut executor = InPlaceExecutor::new().unwrap();
-        let spawner = executor.handle();
-        let monitor = executor.spawn_monitor(UdpServer::with_socket(rtcp_clone)
-                              .start(spawner.boxed(), handlers::RtpHandler::new("T0teqPLNQQOf+5W+ls+P2p16".to_string(), rtcp_wrapper.sender.clone(), rtcp_cb)));
-        thread::spawn(move || {
-            let result = executor.run_fiber(monitor).unwrap();
-        });
 
         RtpSession {
             rtcp_stream: RtcpStream::new(rtcp_wrapper),

@@ -14,9 +14,6 @@ chan = "0.1.18"
 rand = "0.3.14"
 timer = "0.1.6"
 time = "0.1.35"
-rustun = { path = "../rustun" }
-fibers = { path = "../fibers-rs" }
-futures = "0.1"
 
 [dependencies.log4rs]
 version = "0.4.8"
