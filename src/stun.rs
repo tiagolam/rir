@@ -565,6 +565,17 @@ impl Stun {
             sucss_pkt.attrs.insert(0x0008, Attr::MessageIntegrity(resp_msg_itgt));
         }
 
+        let fingerprint = packet.attrs.get(&0x8028);
+        let mut resp_fingerprint;
+        if let &Attr::Fingerprint( ref x ) =  fingerprint.unwrap() {
+            resp_fingerprint = Fingerprint {
+                fingerprint: 0,
+                raw_up_to: Vec::new(),
+            };
+
+            sucss_pkt.attrs.insert(0x8028, Attr::Fingerprint(resp_fingerprint));
+        }
+
         sucss_pkt
     }
 
@@ -620,7 +631,7 @@ impl Stun {
         let fingerprint = packet.attrs.get(&0x8028);
         if let &Attr::Fingerprint( ref x ) = fingerprint.unwrap() {
             if !x.is_valid() {
-                return Some(1)/*Err("Fingerprints mismatch")*/
+                return Some(0)/*Err("Fingerprints mismatch")*/
             }
         }
 
@@ -629,7 +640,7 @@ impl Stun {
         let msg_itgt = packet.attrs.get(&0x0008);
         if let &Attr::MessageIntegrity( ref x ) =  msg_itgt.unwrap() {
             if !x.match_on_short_cred(&self.passwd) {
-                return Some(1)/*Err("Message-Integritty check mismatch")*/
+                return Some(0)/*Err("Message-Integritty check mismatch")*/
             }
         }
 
@@ -648,7 +659,7 @@ impl Stun {
             }
         }).collect();*/
 
-        Some(0)
+        Some(1)
     }
 
     fn parse_attr(&self, raw: &[u8], attr_idx: usize, attr_len: usize,
@@ -765,34 +776,21 @@ impl Stun {
     }
 
     /// Parse the 'raw' payload into a StunPkt
-    pub fn parse_stun(&self, raw: &[u8], packet: &mut StunPkt) {
+    pub fn parse_stun(&self, raw: &[u8]) -> Option<StunPkt> {
         let zeros:u8 = raw[0] & 0xC0;
         // If not zero, then this can't be a STUN message
         if zeros != 0 {
-            return
+            return None
         }
 
         let msg_typ:u16 = BigEndian::read_u16(&raw[0..2]) & 0x3FFF;
-        println!("msg_type {}", msg_typ);
         let msg_mt = MsgMethod::from_raw(msg_typ);
-        match msg_mt {
-            /* Message method not supported, returning error */
-            MsgMethod::Unknown => return,
-            // TODO(tlam): Supportonly what's strictly needed for the connectivity checks
-            _                  => packet.msg_mt = msg_mt,
-        };
         let msg_cl = MsgClass::from_raw(msg_typ);
-        match msg_cl {
-            /* Message method not supported, returning error */
-            MsgClass::Unknown => return,
-            // TODO(tlam): Supportonly what's strictly needed for the connectivity checks
-            _                 => packet.msg_cl = msg_cl,
-        };
         let msg_len:u16 = BigEndian::read_u16(&raw[2..4]);
         let magic:u32 = BigEndian::read_u32(&raw[4..8]);
         /* Confirm this is a STUN message */
         if (magic != MAGIC_COOKIE) {
-            return
+            return None
         }
 
         //TODO(tlam): Check the message length is sensible
@@ -806,21 +804,58 @@ impl Stun {
         a[2] = LittleEndian::read_u32(&le[8..12]);
         let trans_id:U96 = U96(a);
 
-        packet.msg_len = msg_len;
-        packet.trans_id = trans_id;
+        /* Fill packet with parsed data */
+
+        let mut pkt = StunPkt {
+            msg_mt: msg_mt,
+            msg_cl: msg_cl,
+            msg_len: msg_len,
+            trans_id: trans_id,
+            attrs: HashMap::new(),
+        };
+
+        /* TODO(tlam): Verify Msg class and emthod are not "unknown" */
+        /*
+        match msg_mt {
+            /* Message method not supported, returning error */
+            MsgMethod::Unknown => return,
+            // TODO(tlam): Supportonly what's strictly needed for the connectivity checks
+            _                  => pkt.msg_mt = msg_mt,
+        };
+        match msg_cl {
+            /* Message method not supported, returning error */
+            MsgClass::Unknown => return,
+            // TODO(tlam): Supportonly what's strictly needed for the connectivity checks
+            _                 => pkt.msg_cl = msg_cl,
+        };
+        */
 
         /* Header is always 20 bytes, rest of packet are attributes */
-        self.parse_attrs(&raw, msg_len as usize, packet);
+        self.parse_attrs(&raw, msg_len as usize, &mut pkt);
 
+        Some(pkt)
+    }
+
+    pub fn process_stun(&self, raw: &[u8]) -> Option<Vec<u8>> {
+        let pkt = self.parse_stun(raw);
+        if pkt.is_none() {
+            return None
+        }
+
+        let pkt = pkt.unwrap();
         /* TODO Validate parsed packet based on rfc5389, section 7.3 */
-        let is_valid = self.validate(packet);
+        let is_valid = self.validate(&pkt);
 
         /* Based on the success or error, generate the response */
-        /*if is_valid {
-            /* TODO(tlam): Generate success */
-        } else {
-            /* TODO(tlam): Generate error */
-        }*/
+        match is_valid {
+            Some(x) => {
+                /* Generate sucessfull response */
+                let succ_pkt = self.success(&pkt);
+
+                Some(self.to_raw(&succ_pkt))
+            },
+            None => { return None }
+        }
     }
 }
 
@@ -843,20 +878,18 @@ mod test {
         let lsock = "10.0.0.1:6000".parse()
                     .expect("Unable to parse socket address");
         let stun = Stun::new("T0teqPLNQQOf+5W+ls+P2p16", lsock);
-        let mut stun_pkt = StunPkt {
-            msg_mt: MsgMethod::Unknown,
-            msg_cl: MsgClass::Unknown,
-            msg_len: 0,
-            trans_id: U96([0; 3]),
-            attrs: HashMap::new(),
-        };
-        stun.parse_stun(&PAYLOAD1, &mut stun_pkt);
 
-        println!("{:?}", stun_pkt.msg_mt);
-        println!("{:?}", stun_pkt.msg_cl);
-        println!("{:?}", stun_pkt.msg_len);
-        println!("{:?}", stun_pkt.trans_id);
-        println!("{:?}", stun_pkt.attrs.len());
+        let pkt = stun.parse_stun(&PAYLOAD1);
+
+        assert!(pkt.is_some());
+
+        let pkt = pkt.unwrap();
+
+        println!("{:?}", pkt.msg_mt);
+        println!("{:?}", pkt.msg_cl);
+        println!("{:?}", pkt.msg_len);
+        println!("{:?}", pkt.trans_id);
+        println!("{:?}", pkt.attrs.len());
     }
 
     #[test]
@@ -909,14 +942,11 @@ mod test {
 
         /* Parse STUN message from raw and check if parameters are correct */
 
-        let mut parsed_pkt = StunPkt {
-            msg_mt: MsgMethod::Unknown,
-            msg_cl: MsgClass::Unknown,
-            msg_len: 0,
-            trans_id: U96([0; 3]),
-            attrs: HashMap::new(),
-        };
-        stun.parse_stun(&payload, &mut parsed_pkt);
+        let parsed_pkt = stun.parse_stun(&payload);
+
+        assert!(parsed_pkt.is_some());
+
+        let parsed_pkt = parsed_pkt.unwrap();
 
         assert!(stun_pkt.msg_mt == parsed_pkt.msg_mt);
         assert!(stun_pkt.msg_cl == parsed_pkt.msg_cl);
