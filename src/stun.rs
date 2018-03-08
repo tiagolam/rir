@@ -820,7 +820,7 @@ mod test {
     const PAYLOAD2:[u8;108] = [0x00, 0x01, 0x00, 0x58, 0x21, 0x12, 0xa4, 0x42, 0x53, 0x36, 0x43, 0x55, 0x39, 0x34, 0x33, 0x49, 0x6e, 0x4e, 0x69, 0x39, 0x00, 0x06, 0x00, 0x15, 0x4f, 0x79, 0x65, 0x66, 0x37, 0x75, 0x76, 0x42, 0x6c, 0x77, 0x61, 0x66, 0x49, 0x33, 0x68, 0x54, 0x3a, 0x55, 0x53, 0x31, 0x46, 0x00, 0x00, 0x00, 0xc0, 0x57, 0x00, 0x04, 0x00, 0x00, 0x00, 0x32, 0x80, 0x2a, 0x00, 0x08, 0xa7, 0xc6, 0x5f, 0x79, 0x29, 0x8b, 0x9e, 0x91, 0x00, 0x24, 0x00, 0x04, 0x6e, 0x00, 0x1e, 0xfe, 0x00, 0x08, 0x00, 0x14, 0xb5, 0x46, 0x7f, 0x1c, 0xfd, 0xa8, 0xca, 0x51, 0x88, 0x9c, 0xf0, 0x8c, 0x18, 0x01, 0xec, 0x34, 0xab, 0x68, 0x6b, 0x5f, 0x80, 0x28, 0x00, 0x04, 0x3d, 0xdb, 0x55, 0xb5];
 
     #[test]
-    fn sample_request() {
+    fn parse_sample_request() {
         let stun = Stun::new("T0teqPLNQQOf+5W+ls+P2p16");
         let mut stun_pkt = StunPkt {
             msg_mt: MsgMethod::Unknown,
@@ -836,5 +836,62 @@ mod test {
         println!("{:?}", stun_pkt.msg_len);
         println!("{:?}", stun_pkt.trans_id);
         println!("{:?}", stun_pkt.attrs.len());
+    }
+
+    #[test]
+    fn to_raw() {
+        let stun = Stun::new("T0teqPLNQQOf+5W+ls+P2p16");
+        let mut stun_pkt = StunPkt {
+            msg_mt: MsgMethod::Binding,
+            msg_cl: MsgClass::Success,
+            msg_len: 0,
+            trans_id: U96([0; 3]),
+            attrs: HashMap::new(),
+        };
+        let user = Username {
+            username: "test_user".to_owned(),
+        };
+        stun_pkt.attrs.insert(0x0006, Attr::Username(user));
+
+        let mapped_addr = XorMappedAddrAttr {
+                fmly: 1, /* v4 */
+                port: 6000, /* 6000 */
+                addr: Addr {
+                    v4: 167772161 /* 10.0.0.1 */
+                },
+        };
+        stun_pkt.attrs.insert(0x0020, Attr::XorMappedAddrAttr(mapped_addr));
+
+        let msg_itgt = MessageIntegrity {
+            hash: [0; 20],
+            raw_up_to: Vec::new(),
+        };
+
+        stun_pkt.attrs.insert(0x0008, Attr::MessageIntegrity(msg_itgt));
+
+        let fingerprint = Fingerprint {
+            fingerprint: 0,
+            raw_up_to: Vec::new(),
+        };
+
+        stun_pkt.attrs.insert(0x8028, Attr::Fingerprint(fingerprint));
+
+        let payload = stun.to_raw(&stun_pkt);
+        println!("Payload: {:?}", payload);
+
+        let mut parsed_pkt = StunPkt {
+            msg_mt: MsgMethod::Unknown,
+            msg_cl: MsgClass::Unknown,
+            msg_len: 0,
+            trans_id: U96([0; 3]),
+            attrs: HashMap::new(),
+        };
+        stun.parse_stun(&payload, &mut parsed_pkt);
+
+        assert!(stun_pkt.msg_mt == parsed_pkt.msg_mt);
+        assert!(stun_pkt.msg_cl == parsed_pkt.msg_cl);
+        assert!(parsed_pkt.msg_len == 60);
+        assert!(stun_pkt.trans_id == parsed_pkt.trans_id);
+        assert!(parsed_pkt.attrs.len() == 4);
     }
 }
