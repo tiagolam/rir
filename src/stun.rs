@@ -18,6 +18,7 @@
 // Thus, consider this a semi-implementationon for this only.
 use std::str;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 
 use byteorder::{ByteOrder, BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use stringprep;
@@ -462,10 +463,6 @@ impl StunAttr for UnknownRequired {
     }
 }*/
 
-pub struct Stun {
-    passwd: String,
-}
-
 pub struct StunPkt {
     msg_mt: MsgMethod,
     msg_cl: MsgClass,
@@ -497,10 +494,16 @@ struct RawAttr {
 struct AttrErr {
 }
 
+pub struct Stun {
+    passwd: String,
+    lsock: SocketAddr,
+}
+
 impl Stun {
-    pub fn new(passwd: &str) -> Stun {
+    pub fn new(passwd: &str, lsock: SocketAddr) -> Stun {
         Stun {
             passwd: passwd.to_owned(),
+            lsock: lsock,
         }
     }
 
@@ -526,12 +529,28 @@ impl Stun {
             sucss_pkt.attrs.insert(0x0006, Attr::Username(resp_user));
         }
 
+        let addr;
+        let fmly;
+        match self.lsock {
+            SocketAddr::V4(ipv4) => {
+                fmly = 1;
+                addr = Addr {
+                    v4: BigEndian::read_u32(&ipv4.ip().octets()),
+                };
+            },
+            SocketAddr::V6(ipv6) => {
+                fmly = 2;
+                addr = Addr {
+                    v6: U128([0; 4]),
+                };
+
+            },
+        }
+
         let mapped_addr = XorMappedAddrAttr {
-                fmly: 1,
-                port: 12345,
-                addr: Addr {
-                    v4: 50192
-                },
+                fmly: fmly,
+                port: self.lsock.port(),
+                addr: addr,
         };
         sucss_pkt.attrs.insert(0x0020, Attr::XorMappedAddrAttr(mapped_addr));
 
@@ -821,7 +840,9 @@ mod test {
 
     #[test]
     fn parse_sample_request() {
-        let stun = Stun::new("T0teqPLNQQOf+5W+ls+P2p16");
+        let lsock = "10.0.0.1:6000".parse()
+                    .expect("Unable to parse socket address");
+        let stun = Stun::new("T0teqPLNQQOf+5W+ls+P2p16", lsock);
         let mut stun_pkt = StunPkt {
             msg_mt: MsgMethod::Unknown,
             msg_cl: MsgClass::Unknown,
@@ -840,7 +861,12 @@ mod test {
 
     #[test]
     fn to_raw() {
-        let stun = Stun::new("T0teqPLNQQOf+5W+ls+P2p16");
+        let lsock = "10.0.0.1:6000".parse()
+                    .expect("Unable to parse socket address");
+        let stun = Stun::new("T0teqPLNQQOf+5W+ls+P2p16", lsock);
+
+        /* Compose "real" STUN message to then be parsed to raw payload */
+
         let mut stun_pkt = StunPkt {
             msg_mt: MsgMethod::Binding,
             msg_cl: MsgClass::Success,
@@ -848,6 +874,10 @@ mod test {
             trans_id: U96([0; 3]),
             attrs: HashMap::new(),
         };
+
+        /* Insert attributes manually, as to simulate when success() method in
+         * Stun inserts the attributes expected for a successfull response */
+
         let user = Username {
             username: "test_user".to_owned(),
         };
@@ -866,18 +896,18 @@ mod test {
             hash: [0; 20],
             raw_up_to: Vec::new(),
         };
-
         stun_pkt.attrs.insert(0x0008, Attr::MessageIntegrity(msg_itgt));
 
         let fingerprint = Fingerprint {
             fingerprint: 0,
             raw_up_to: Vec::new(),
         };
-
         stun_pkt.attrs.insert(0x8028, Attr::Fingerprint(fingerprint));
 
         let payload = stun.to_raw(&stun_pkt);
         println!("Payload: {:?}", payload);
+
+        /* Parse STUN message from raw and check if parameters are correct */
 
         let mut parsed_pkt = StunPkt {
             msg_mt: MsgMethod::Unknown,
