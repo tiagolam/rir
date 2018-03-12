@@ -494,6 +494,7 @@ struct RawAttr {
 struct AttrErr {
 }
 
+#[derive(Clone)]
 pub struct Stun {
     passwd: String,
     lsock: SocketAddr,
