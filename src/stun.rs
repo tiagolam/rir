@@ -267,7 +267,7 @@ impl MessageIntegrity {
         let ped = ped.unwrap().into_owned();
         // 2. Modify messasge len to point to MessageIntegrity's end
         let mut raw = self.raw_up_to.clone();
-        let msg_len = raw.len() + 4;
+        let msg_len = raw.len() - 20 + 20 + 4;
         BigEndian::write_u16(&mut raw[2..4], (msg_len as u16));
         // 3. Hash 2. using 1. as key
         let mhash = hmacsha1::hmac_sha1(ped.as_bytes(), &raw);
@@ -323,7 +323,8 @@ impl Fingerprint {
 
     pub fn is_valid(&self) -> bool {
         let raw = &self.raw_up_to;
-        let crc = crc32::checksum_ieee(raw) ^ FINGERPRINT_XOR;
+
+        let crc = crc32::checksum_ieee(&raw) ^ FINGERPRINT_XOR;
         if crc != self.fingerprint {
             return false
         }
