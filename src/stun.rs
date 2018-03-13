@@ -158,9 +158,9 @@ impl XorMappedAddrAttr {
         BigEndian::write_u16(&mut raw_attr[2..], 0x8);
         raw_attr[4] = 0x0;
         raw_attr[5] = mapped_addr.fmly;
-        BigEndian::write_u16(&mut raw_attr[6..], mapped_addr.port);
+        BigEndian::write_u16(&mut raw_attr[6..], mapped_addr.port ^ ((MAGIC_COOKIE >> 16) as u16));
         unsafe {
-            BigEndian::write_u32(&mut raw_attr[8..], mapped_addr.addr.v4);
+            BigEndian::write_u32(&mut raw_attr[8..], mapped_addr.addr.v4 ^ MAGIC_COOKIE);
         }
 
         raw_attr
@@ -285,15 +285,13 @@ impl MessageIntegrity {
             return vec![0;1]
         }
         let ped = ped.unwrap().into_owned();
-        // 2. Modify messasge len to point to MessageIntegrity's end
+        // 2. Modify message len to point to MessageIntegrity's end
         let msg_len:u16 = BigEndian::read_u16(&raw[2..4]);
-        BigEndian::write_u16(&mut raw[2..4], msg_len + 4);
+        BigEndian::write_u16(&mut raw[2..4], msg_len + 24);
         // 3. Hash 2. using 1. as key
         let hash = hmacsha1::hmac_sha1(ped.as_bytes(), &raw);
 
         let mut raw_attr: Vec<u8> = vec![0; 4];
-
-        BigEndian::write_u16(&mut raw[2..4], msg_len + 24);
 
         BigEndian::write_u16(&mut raw_attr[0..], 0x0008);
         BigEndian::write_u16(&mut raw_attr[2..], 0x14);
@@ -334,15 +332,12 @@ impl Fingerprint {
     }
 
     fn to_raw(raw: &mut [u8]) -> Vec<u8> {
-        let mut raw_len = raw.len()+4;
-        BigEndian::write_u16(&mut raw[2..4], (raw_len as u16));
+        let msg_len = BigEndian::read_u16(&raw[2..4]);
+        BigEndian::write_u16(&mut raw[2..4], msg_len + 8);
 
-        let crc = crc32::checksum_ieee(raw) ^ FINGERPRINT_XOR;
+        let crc = crc32::checksum_ieee(&raw) ^ FINGERPRINT_XOR;
 
         let mut raw_attr: Vec<u8> = vec![0; 8];
-
-        let msg_len:u16 = BigEndian::read_u16(&raw[2..4]);
-        BigEndian::write_u16(&mut raw[2..4], msg_len + 8);
 
         BigEndian::write_u16(&mut raw_attr[0..], 0x8028);
         BigEndian::write_u16(&mut raw_attr[2..], 0x4);
@@ -350,7 +345,6 @@ impl Fingerprint {
 
         raw_attr
     }
-
 }
 
 impl StunAttr for Fingerprint {
@@ -529,7 +523,6 @@ impl Stun {
 
             sucss_pkt.attrs.insert(0x0006, Attr::Username(resp_user));
         }
-
         let addr;
         let fmly;
         match self.lsock {
@@ -588,15 +581,15 @@ impl Stun {
         BigEndian::write_u16(&mut raw_pkt[0..], msg_mt | msg_cl);
         BigEndian::write_u16(&mut raw_pkt[2..], 0);
         BigEndian::write_u32(&mut raw_pkt[4..], MAGIC_COOKIE);
-        BigEndian::write_u32(&mut raw_pkt[8..], pkt.trans_id.0[0]);
+        BigEndian::write_u32(&mut raw_pkt[8..], pkt.trans_id.0[2]);
         BigEndian::write_u32(&mut raw_pkt[12..], pkt.trans_id.0[1]);
-        BigEndian::write_u32(&mut raw_pkt[16..], pkt.trans_id.0[2]);
+        BigEndian::write_u32(&mut raw_pkt[16..], pkt.trans_id.0[0]);
 
         let username = pkt.attrs.get(&0x0006);
         if let &Attr::Username( ref x ) = username.unwrap() {
             let mut rattr = Username::to_raw(x);
             let msg_len:u16 = BigEndian::read_u16(&raw_pkt[2..4]);
-            BigEndian::write_u16(&mut raw_pkt[2..4], msg_len + ((rattr.len()+4) as u16));
+            BigEndian::write_u16(&mut raw_pkt[2..4], msg_len + (rattr.len() as u16));
             raw_pkt.append(&mut rattr);
         }
 
@@ -604,7 +597,7 @@ impl Stun {
         if let &Attr::XorMappedAddrAttr( ref x ) = mapped_addr.unwrap() {
             let mut rattr = XorMappedAddrAttr::to_raw(x);
             let msg_len:u16 = BigEndian::read_u16(&raw_pkt[2..4]);
-            BigEndian::write_u16(&mut raw_pkt[2..4], msg_len + ((rattr.len()+4) as u16));
+            BigEndian::write_u16(&mut raw_pkt[2..4], msg_len + (rattr.len() as u16));
             raw_pkt.append(&mut rattr);
         }
 
@@ -798,9 +791,7 @@ impl Stun {
         
         let le = ntoh(&raw[8..20]);
         let mut a:[u32;3] = [0; 3];
-        println!("Vec {:?}", le);
         a[0] = LittleEndian::read_u32(&le[0..4]);
-        println!("a[0] {}", a[0]);
         a[1] = LittleEndian::read_u32(&le[4..8]); 
         a[2] = LittleEndian::read_u32(&le[8..12]);
         let trans_id:U96 = U96(a);
