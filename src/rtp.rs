@@ -31,7 +31,7 @@ use timer::Timer;
 use time::Duration;
 use time;
 
-use handlers;
+use handlers::{CallbackType, RtpHandler};
 use stun::Stun;
 
 pub struct RtpHeader {
@@ -80,7 +80,6 @@ macro_rules! RTP_SEQ_MOD {
 
 /* Appendix A.1 */
 impl SourceState {
-
     fn new(seq: u16) -> SourceState {
         let mut source_state = SourceState {
             max_seq: Mutex::new(0),
@@ -166,49 +165,6 @@ impl SourceState {
     }
 }
 
-// TODO(tlam): Do we need a separate count for the members from the one
-// already provided by arrays?
-#[derive(Clone)]
-pub struct RtcpStream {
-    // RTCP stream socket connection 
-    transport: StunWrapper,
-    // Last time an RTPC packet was transmitted
-    tp: Arc<Mutex<u64>>,
-    // Current time
-    tc: u64,
-    // Next scheduled transmission time of an RTCP packet
-    tn: u64,
-    // Estimated number of session members at the time `tn` was last computed
-    pmembers: u32,
-    // Most current estimate for the number of session members
-    members: Arc<Mutex<u32>>,
-    // Most current estimate for the number of senders in a session
-    senders: Arc<Mutex<u32>>,
-    // Target RTCP bandwidth, i.e., the total bandwidth that will be used for
-    // RTCP packets by all members of this session, in octets per second
-    rtcp_bw: u32,
-    // `True` if application has sent data since the 2nd previous RTCP report
-    // was transmitted
-    we_sent: Arc<Mutex<bool>>,
-    // Average compound RTCP packet size, in octets, over all RTCP packets sent
-    // and received by this participant
-    avg_rtcp_size: Arc<Mutex<usize>>,
-    // `True` if application has not sent yet sent an RTCP packet
-    initial: bool,
-
-    // List of synchronization sources
-    members_table: Arc<Mutex<HashMap<u32, u64>>>,
-    // List of contributing sources
-    senders_table: Arc<Mutex<HashMap<u32, u64>>>,
-    // List of unauthenticated sources
-    unauth_table: Arc<Mutex<HashMap<u32, SourceState>>>,
-    tx_timer: Arc<Mutex<Timer>>,
-    // TODO(tlam): This is probably best saved as the RTP session state, instead
-    // of RTCP state
-    packet_count: Arc<Mutex<u32>>,
-    byte_count: Arc<Mutex<u32>>,
-}
-
 trait Transport {
     fn recv(&self, payload: &mut [u8]) -> (usize, Option<SocketAddr>);
 
@@ -252,19 +208,19 @@ impl Transport for UdpTransport {
 #[derive(Clone)]
 struct StunWrapper {
     stun: Stun,
-    handler: Arc<RwLock<handlers::RtpHandler>>,
+    handler: Arc<RtpHandler>,
     // Dest socket connection
     transport: UdpTransport,
 }
 
 impl StunWrapper {
-    fn new(transport: UdpTransport, passwd: &str, handler: handlers::RtpHandler) -> StunWrapper {
+    fn new(transport: UdpTransport, passwd: &str, handler: RtpHandler) -> StunWrapper {
         let laddr = transport.local_socket.read().unwrap().local_addr().ok();
         let stun = Stun::new(passwd, laddr.unwrap());
 
         StunWrapper {
             stun: stun,
-            handler: Arc::new(RwLock::new(handler)),
+            handler: Arc::new(handler),
             transport: transport,
         }
     }
@@ -274,7 +230,6 @@ impl Transport for StunWrapper {
     // Receive the packet that comes on the other side side of the channel
     // and handle it
     fn recv(&self, payload: &mut [u8]) -> (usize, Option<SocketAddr>) {
-
         let (size, addr) = self.transport.recv(payload);
 
         let raw_msg = self.stun.process_stun(&payload[0..size]);
@@ -283,13 +238,11 @@ impl Transport for StunWrapper {
             rtp[0..size].clone_from_slice(&payload[0..size]);
             payload[0..size].clone_from_slice(&rtp);
 
-            debug!("Receiving {} from RTP/RTCP... {:?}", payload.len(), payload);
+            debug!("Receiving non-STUN of size {}", size);
 
             return (size, None)
         } else {
-            let handler = self.handler.read().unwrap();
-
-            handler.use_candidate.handle_event(handlers::CallbackType::USE_CANDIDATE(addr.unwrap()));
+            self.handler.use_candidate(addr.unwrap());
 
             self.send(&raw_msg.unwrap());
 
@@ -303,8 +256,50 @@ impl Transport for StunWrapper {
     }
 }
 
-impl RtcpStream {
+// TODO(tlam): Do we need a separate count for the members from the one
+// already provided by arrays?
+#[derive(Clone)]
+pub struct RtcpStream {
+    // RTCP stream socket connection
+    transport: StunWrapper,
+    // Last time an RTPC packet was transmitted
+    tp: Arc<Mutex<u64>>,
+    // Current time
+    tc: u64,
+    // Next scheduled transmission time of an RTCP packet
+    tn: u64,
+    // Estimated number of session members at the time `tn` was last computed
+    pmembers: u32,
+    // Most current estimate for the number of session members
+    members: Arc<Mutex<u32>>,
+    // Most current estimate for the number of senders in a session
+    senders: Arc<Mutex<u32>>,
+    // Target RTCP bandwidth, i.e., the total bandwidth that will be used for
+    // RTCP packets by all members of this session, in octets per second
+    rtcp_bw: u32,
+    // `True` if application has sent data since the 2nd previous RTCP report
+    // was transmitted
+    we_sent: Arc<Mutex<bool>>,
+    // Average compound RTCP packet size, in octets, over all RTCP packets sent
+    // and received by this participant
+    avg_rtcp_size: Arc<Mutex<usize>>,
+    // `True` if application has not sent yet sent an RTCP packet
+    initial: bool,
 
+    // List of synchronization sources
+    members_table: Arc<Mutex<HashMap<u32, u64>>>,
+    // List of contributing sources
+    senders_table: Arc<Mutex<HashMap<u32, u64>>>,
+    // List of unauthenticated sources
+    unauth_table: Arc<Mutex<HashMap<u32, SourceState>>>,
+    tx_timer: Arc<Mutex<Timer>>,
+    // TODO(tlam): This is probably best saved as the RTP session state, instead
+    // of RTCP state
+    packet_count: Arc<Mutex<u32>>,
+    byte_count: Arc<Mutex<u32>>,
+}
+
+impl RtcpStream {
     fn new(transport: StunWrapper) -> RtcpStream {
         let mut rtcp_stream = RtcpStream {
             transport: transport,
@@ -827,10 +822,7 @@ impl RtcpStream {
 }
 
 pub trait RirHandler {
-    fn handle_event(&self, handlers::CallbackType);
-}
-
-pub fn fake_callback(callback_type: handlers::CallbackType) {
+    fn handle_event(&self, CallbackType);
 }
 
 impl RtpSession {
@@ -851,7 +843,7 @@ impl RtpSession {
 
         // Build transport based on
         let transport = UdpTransport::new(rtp_conn, socket_addr);
-        let stun_wrapper = StunWrapper::new(transport, passwd, handlers::RtpHandler::new("T0teqPLNQQOf+5W+ls+P2p16".to_string(), rtp_cb));
+        let stun_wrapper = StunWrapper::new(transport, passwd, RtpHandler::new(rtp_cb));
 
         debug!("Setting up STUN for RTCP {}:{}", rtcp_addr.ip(), rtcp_addr.port());
 
@@ -863,7 +855,7 @@ impl RtpSession {
         let rtcp_conn = UdpSocket::bind(rtcp_addr).unwrap();
 
         let rtcp_transport = UdpTransport::new(rtcp_conn, rem_socket);
-        let rtcp_wrapper = StunWrapper::new(rtcp_transport, passwd, handlers::RtpHandler::new("T0teqPLNQQOf+5W+ls+P2p16".to_string(), rtcp_cb));
+        let rtcp_wrapper = StunWrapper::new(rtcp_transport, passwd, RtpHandler::new(rtcp_cb));
 
         RtpSession {
             rtcp_stream: RtcpStream::new(rtcp_wrapper),

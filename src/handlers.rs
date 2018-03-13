@@ -1,12 +1,10 @@
 use std::net::SocketAddr;
-use std::sync::{mpsc, Arc, Mutex};
 
 use rtp::RirHandler;
 
 /// A `HandleMessage` implementation which only handle `Binding` method.
 pub struct RtpHandler {
-    passwd: String,
-    pub use_candidate: Box<RirHandler + Send + Sync>,
+    callback: Box<RirHandler + Send + Sync>,
 }
 
 #[derive(Debug)]
@@ -16,10 +14,13 @@ pub enum CallbackType {
 
 impl RtpHandler {
     /// Makes a new `RtpHandler` instance.
-    pub fn new(passwd: String, callback: Box<RirHandler + Send + Sync>) -> Self {
+    pub fn new(callback: Box<RirHandler + Send + Sync>) -> Self {
         RtpHandler {
-            passwd: passwd,
-            use_candidate: callback,
+            callback: callback,
         }
+    }
+
+    pub fn use_candidate(&self, sock: SocketAddr) {
+        self.callback.handle_event(CallbackType::USE_CANDIDATE(sock));
     }
 }
