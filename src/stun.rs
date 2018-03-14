@@ -104,6 +104,8 @@ enum Attr {
     IceControlling(IceControlling),
     UnknownOptional(UnknownOptional),
     UnknownRequired(UnknownRequired),
+    ErrorAttr(ErrorAttr),
+    UnknownAttrs(UnknownAttrs),
 }
 
 trait StunAttr {
@@ -443,6 +445,60 @@ impl UnknownRequired {
 impl StunAttr for UnknownRequired {
 }
 
+struct ErrorAttr {
+    class: u8,
+    number: u8,
+    reason: String,
+}
+
+impl ErrorAttr {
+    fn from_stunerr(err: &StunErr) -> ErrorAttr {
+        return ErrorAttr {
+            class: (err.code / 100) as u8,
+            number: (err.code % 100) as u8,
+            reason: "".to_owned(),
+        }
+    }
+
+    fn to_raw(&self) -> Vec<u8> {
+        let mut raw_attr:Vec<u8> = vec![0; 2];
+        let cl = self.class & 0x07;
+
+        raw_attr.push(cl);
+        raw_attr.push(self.number);
+        raw_attr.extend_from_slice(self.reason.as_bytes());
+
+        raw_attr
+    }
+}
+
+impl StunAttr for ErrorAttr {
+}
+
+struct UnknownAttrs {
+    attrs: Vec<u16>,
+}
+
+impl UnknownAttrs {
+    fn from_stunerr(err: StunErr) -> UnknownAttrs {
+        return UnknownAttrs {
+            attrs: err.unkwn_attrs.unwrap(),
+        }
+    }
+
+    fn to_raw(attrs: &[u16]) -> Vec<u8> {
+        let mut raw_attr:Vec<u8> = vec![0; attrs.len()*2];
+
+        for i in 0..attrs.len() {
+            BigEndian::write_u16(&mut raw_attr[i*2..], attrs[i]);
+        }
+
+        raw_attr
+    }
+}
+
+impl StunAttr for UnknownAttrs {
+}
 
 /*impl StunAttr {
     /*pub fn from_raw(typ: u16, raw: &[u8]) -> StunAttr {
@@ -486,7 +542,18 @@ struct RawAttr {
     passwd: Option<String>,
 }
 
-struct AttrErr {
+struct StunErr {
+    code: u16,
+    unkwn_attrs: Option<Vec<u16>>,
+}
+
+impl StunErr {
+    fn code(code: u16) -> StunErr {
+        StunErr {
+            code: code,
+            unkwn_attrs: None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -503,7 +570,24 @@ impl Stun {
         }
     }
 
-    fn error(&self, packet: &StunPkt) {
+    fn error(&self, packet: &StunPkt, err: StunErr) -> StunPkt {
+        let mut err_pkt = StunPkt {
+            msg_mt: MsgMethod::Binding,
+            msg_cl: MsgClass::Error,
+            msg_len: 0,
+            trans_id: packet.trans_id,
+            attrs: HashMap::new(),
+        };
+
+        let err_attr = ErrorAttr::from_stunerr(&err);
+        err_pkt.attrs.insert(0x0009, Attr::ErrorAttr(err_attr));
+
+        if err.unkwn_attrs.is_some() {
+            let unkwn_attrs = UnknownAttrs::from_stunerr(err);
+            err_pkt.attrs.insert(0x000a, Attr::UnknownAttrs(unkwn_attrs));
+        }
+
+        err_pkt
     }
 
     fn success(&self, packet: &StunPkt) -> StunPkt {
@@ -618,15 +702,42 @@ impl Stun {
         let new_len = (raw_pkt.len()-20) as u16;
         BigEndian::write_u16(&mut raw_pkt[2..4], new_len);
 
+        let error = pkt.attrs.get(&0x0009);
+        match error {
+            Some(e) => {
+                if let &Attr::ErrorAttr( ref x ) = e {
+                    let mut rattr = x.to_raw();
+
+                    raw_pkt.append(&mut rattr);
+                }
+            },
+            None => {},
+        }
+
+        let unkwn_attrs = pkt.attrs.get(&0x000a);
+        match unkwn_attrs {
+            Some(e) => {
+                if let &Attr::UnknownAttrs( ref x ) = e {
+                    let mut rattr = UnknownAttrs::to_raw(&x.attrs);
+
+                    raw_pkt.append(&mut rattr);
+                }
+            },
+            None => {},
+        }
+
         raw_pkt
     }
 
-    fn validate(&self, packet: &StunPkt) -> Option<u8> {
+    fn validate(&self, packet: &StunPkt) ->  Option<StunErr> {
         /* 1. validate the FINGERPRINT, iff in use */
         let fingerprint = packet.attrs.get(&0x8028);
         if let &Attr::Fingerprint( ref x ) = fingerprint.unwrap() {
             if !x.is_valid() {
-                return Some(0)/*Err("Fingerprints mismatch")*/
+                return Some(StunErr {
+                    code: 400,
+                    unkwn_attrs: None,
+                })
             }
         }
 
@@ -635,30 +746,35 @@ impl Stun {
         let msg_itgt = packet.attrs.get(&0x0008);
         if let &Attr::MessageIntegrity( ref x ) =  msg_itgt.unwrap() {
             if !x.match_on_short_cred(&self.passwd) {
-                return Some(0)/*Err("Message-Integritty check mismatch")*/
+                return Some(StunErr {
+                    code: 400,
+                    unkwn_attrs: None,
+                })
             }
         }
 
         /* Unknown required attributes should be saved to be sent with Error */
-        let mut unk_attrs: Vec<&u16> = Vec::new();
+        let mut unkwn_attrs: Vec<u16> = Vec::new();
         for (k, v) in packet.attrs.iter() {
             if k >= &0x0000 && k <= &0x7FFF {
                 if let &Attr::UnknownRequired( _ ) = v {
-                    unk_attrs.push(k);
+                    unkwn_attrs.push(*k);
                 }
             }
         }
-        /*let unk_attrs = packet.attrs.into_iter().filter_map(|(key, value)| {
-            if key >= 0x0000 && key <= 0x7FFF {
-                value.to_owned()
-            }
-        }).collect();*/
 
-        Some(1)
+        if !unkwn_attrs.is_empty() {
+            return Some(StunErr {
+                code: 420,
+                unkwn_attrs: Some(unkwn_attrs),
+            })
+        }
+
+        None
     }
 
     fn parse_attr(&self, raw: &[u8], attr_idx: usize, attr_len: usize,
-                  attr_typ: u16) -> Result</*Box<StunAttr>*/Attr, AttrErr> {
+                  attr_typ: u16) -> Result<Attr, StunErr> {
         let mut rattr = RawAttr {
             attr_raw: raw[attr_idx..attr_idx+attr_len].to_owned(),
             precd_msg: None,
@@ -841,13 +957,18 @@ impl Stun {
 
         /* Based on the success or error, generate the response */
         match is_valid {
-            Some(x) => {
+            None => {
                 /* Generate sucessfull response */
                 let succ_pkt = self.success(&pkt);
 
                 Some(self.to_raw(&succ_pkt))
             },
-            None => { return None }
+            Some(x) => {
+                /* Generate error response */
+                let err_pkt = self.error(&pkt, x);
+
+                Some(self.to_raw(&err_pkt))
+            }
         }
     }
 }
