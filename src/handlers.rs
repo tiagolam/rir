@@ -9,7 +9,7 @@ pub struct RtpHandler {
 
 #[derive(Debug)]
 pub enum CallbackType {
-    USE_CANDIDATE(SocketAddr),
+    UseCandidate(SocketAddr),
 }
 
 impl RtpHandler {
@@ -21,6 +21,6 @@ impl RtpHandler {
     }
 
     pub fn use_candidate(&self, sock: SocketAddr) {
-        self.callback.handle_event(CallbackType::USE_CANDIDATE(sock));
+        self.callback.handle_event(CallbackType::UseCandidate(sock));
     }
 }
