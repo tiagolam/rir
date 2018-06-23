@@ -15,17 +15,13 @@
 
 #![allow(exceeding_bitshifts)]
 
-use std::io::{Cursor};
-use std::mem;
 use std::net::{SocketAddr, UdpSocket};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::sync::mpsc;
-use std::time::{Instant};
 use std::thread;
 
-use byteorder::{ByteOrder, BigEndian, ReadBytesExt, WriteBytesExt};
-use chan::{Receiver};
+use byteorder::{ByteOrder, BigEndian};
 use rand::{thread_rng, Rng};
 use timer::Timer;
 use time::Duration;
@@ -89,7 +85,7 @@ impl SourceState {
             received: Mutex::new(0),
             received_prior: Mutex::new(0),
             expected_prior: Mutex::new(0),
-            probation: 2, /* MIN_SEQUENTIAL */
+            probation: 2, /* min_sequential */
             transit: 0,
             jitter: Mutex::new(0.0),
         };
@@ -111,9 +107,9 @@ impl SourceState {
     fn update_seq(&mut self, seq: u16) -> bool {
         let udelta = seq - *self.max_seq.lock().unwrap();
         // TODO(tlam): This needs to become configurable.
-        let MAX_DROPOUT = 3000;
-        let MAX_MISORDER = 100;
-        let MIN_SEQUENTIAL = 2;
+        let max_dropout = 3000;
+        let max_misorder = 100;
+        let min_sequential = 2;
 
         if self.probation != 0 {
             /* packet is in sequence  */
@@ -128,12 +124,12 @@ impl SourceState {
                     return true;
                 }
             } else {
-                self.probation = MIN_SEQUENTIAL - 1;
+                self.probation = min_sequential - 1;
                 max_seq = seq;
             }
 
             return false;
-        } else if udelta < MAX_DROPOUT {
+        } else if udelta < max_dropout {
             /* in order, with permissible gap */
             if seq < *self.max_seq.lock().unwrap() {
                 /*
@@ -142,7 +138,7 @@ impl SourceState {
                 *self.cycles.lock().unwrap() += RTP_SEQ_MOD!();
             }
             *self.max_seq.lock().unwrap() = seq;
-        } else if udelta <= RTP_SEQ_MOD!() - MAX_MISORDER {
+        } else if udelta <= RTP_SEQ_MOD!() - max_misorder {
             /* the sequence number made a very large jump */
             if (seq as u32) == self.bad_seq {
                 /*
@@ -301,7 +297,7 @@ pub struct RtcpStream {
 
 impl RtcpStream {
     fn new(transport: StunWrapper) -> RtcpStream {
-        let mut rtcp_stream = RtcpStream {
+        let rtcp_stream = RtcpStream {
             transport: transport,
             tp: Arc::new(Mutex::new(0)),
             tc: 0,
@@ -393,8 +389,8 @@ impl RtcpStream {
 
     pub fn compute_next_deterministic_tx_interval(&self, is_sender: bool) -> f64 {
         let senders_ratio:f32 = (*self.senders.lock().unwrap() as f32) / (*self.members.lock().unwrap() as f32);
-        let mut const_c: f32;
-        let mut n: f32;
+        let const_c: f32;
+        let n: f32;
 
         // Step 1.
 
@@ -594,7 +590,7 @@ impl RtcpStream {
         */
 
         let members_table_clone = self.members_table.clone();
-        let mut members_table = members_table_clone.lock().unwrap();
+        let members_table = members_table_clone.lock().unwrap();
         let mut final_table = members_table.clone();
 
         let copy_keys = members_table.keys();
@@ -630,7 +626,7 @@ impl RtcpStream {
         */
 
         let senders_table_clone = self.senders_table.clone();
-        let mut senders_table = senders_table_clone.lock().unwrap();
+        let senders_table = senders_table_clone.lock().unwrap();
         let mut final_table = senders_table.clone();
 
         let copy_keys = senders_table.keys();
@@ -650,7 +646,7 @@ impl RtcpStream {
     }
 
     // RTCP stream IO methods
-    fn read(&self, mut rtcp_pkt: &mut RtcpPkt) -> usize {
+    fn read(&self, rtcp_pkt: &mut RtcpPkt) -> usize {
         let mut udp_payload = [0; 1500];
 
         debug!("Read an RTCP");
@@ -772,7 +768,7 @@ impl RtcpStream {
 
     fn handle_read(&mut self) {
         // Have this thread reading RTCPs
-        while true {
+        loop {
             let mut rtcp_pkt = RtcpPkt {
                 header: RtcpHeader {
                     version: 0, 
@@ -863,7 +859,7 @@ impl RtpSession {
         }
     }
 
-    pub fn read(&self, mut rtp_pkt: &mut RtpPkt) -> usize {
+    pub fn read(&self, rtp_pkt: &mut RtpPkt) -> usize {
         // TODO(tlam): What if we need to read more than 1500 bytes?
         let mut udp_payload = [0; 1500];
 
@@ -943,7 +939,6 @@ pub fn parse_pkt(pkt: &[u8], rtp_pkt: &mut RtpPkt) {
     let ssrc = BigEndian::read_u32(&[pkt[8], pkt[9], pkt[10], pkt[11]]);
 
     let pkt = &pkt[12..];
-    let mut csrc = [0u32, cc as u32];
     let mut csrc = vec![];
     {
         for i in 0..cc as usize {
@@ -958,7 +953,7 @@ pub fn parse_pkt(pkt: &[u8], rtp_pkt: &mut RtpPkt) {
     let payload = &pkt[((cc as usize)*4)..];
     if padding != 0 {
         let last_octet:usize = payload[payload.len() - 1] as usize;
-        let (payload, _) = payload.split_at(payload.len() - last_octet);
+        let (_, _) = payload.split_at(payload.len() - last_octet);
     }
 
     rtp_pkt.header.version = version;
@@ -1087,7 +1082,7 @@ pub fn pkt_rtcp_to_udp_payload(pkt: &RtcpPkt) -> [u8; 1500] {
         BigEndian::write_u32(&mut udp_payload[report_index..], report_block.ssrc);
 
         let mut fraction_sum:u32 = (report_block.fraction_lost as u32) << 24;
-        fraction_sum |= (report_block.sum_nr_packets_lost & 0x00FFFFFF);
+        fraction_sum |= report_block.sum_nr_packets_lost & 0x00FFFFFF;
         BigEndian::write_u32(&mut udp_payload[report_index + 4..], fraction_sum);
         
         BigEndian::write_u32(&mut udp_payload[report_index + 8..], report_block.ext_seq_number);
@@ -1108,7 +1103,7 @@ pub fn parse_rtcp_pkt(pkt: &[u8], rtcp_pkt: &mut RtcpPkt) {
     version >>= 6;
     let mut padding:u8 = pkt[0] & 0x20;
     padding >>= 5;
-    let mut rc:u8 = pkt[0] & 0x1F;
+    let rc:u8 = pkt[0] & 0x1F;
     let payload_type:u8 = pkt[1];
 
     let length = BigEndian::read_u16(&[pkt[2], pkt[3]]);
