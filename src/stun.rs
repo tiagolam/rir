@@ -20,10 +20,9 @@ use std::str;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
-use byteorder::{ByteOrder, BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{ByteOrder, BigEndian, LittleEndian};
 use stringprep;
 use crc::crc32;
-use md5;
 use hmacsha1;
 
 // In Network byte order
@@ -39,7 +38,7 @@ enum MsgMethod {
 
 impl MsgMethod {
     pub fn from_raw(raw: u16) -> MsgMethod {
-        match (raw & 0x0001) {
+        match raw & 0x0001 {
         0x0001 => return MsgMethod::Binding,
         _      => MsgMethod::Unknown,
         }
@@ -64,7 +63,7 @@ enum MsgClass {
 
 impl MsgClass {
     pub fn from_raw(raw: u16) -> MsgClass {
-        match (raw & 0x0110) {
+        match raw & 0x0110 {
             0x0000 => return MsgClass::Request,
             0x0010 => return MsgClass::Indication,
             0x0100 => return MsgClass::Success,
@@ -204,7 +203,7 @@ impl Username {
             padding = 0;
             attr_len = user.username.len();
         } else {
-            padding = (4 - (user.username.len() % 4));
+            padding = 4 - (user.username.len() % 4);
             attr_len = user.username.len() + padding;
         }
 
@@ -376,7 +375,7 @@ impl StunAttr for Priority {
 struct UseCandidate;
 
 impl UseCandidate {
-    fn from_raw(rattr: RawAttr) -> Option<UseCandidate> {
+    fn from_raw(_rattr: RawAttr) -> Option<UseCandidate> {
         return Some(UseCandidate {
         })
     }
@@ -426,7 +425,7 @@ impl StunAttr for IceControlling {
 struct UnknownOptional;
 
 impl UnknownOptional {
-    fn from_raw(rattr: RawAttr) -> Option<UnknownOptional> {
+    fn from_raw(_rattr: RawAttr) -> Option<UnknownOptional> {
         return Some(UnknownOptional)
     }
 }
@@ -437,7 +436,7 @@ impl StunAttr for UnknownOptional {
 struct UnknownRequired;
 
 impl UnknownRequired {
-    fn from_raw(rattr: RawAttr) -> Option<UnknownRequired> {
+    fn from_raw(_rattr: RawAttr) -> Option<UnknownRequired> {
         return Some(UnknownRequired)
     }
 }
@@ -600,7 +599,7 @@ impl Stun {
         };
 
         let username = packet.attrs.get(&0x0006);
-        let mut resp_user;
+        let resp_user;
         if let &Attr::Username( ref x ) =  username.unwrap() {
             resp_user = Username {
                 username: x.username.to_owned(),
@@ -634,7 +633,7 @@ impl Stun {
         sucss_pkt.attrs.insert(0x0020, Attr::XorMappedAddrAttr(mapped_addr));
 
         let msg_itgt = packet.attrs.get(&0x0008);
-        let mut resp_msg_itgt;
+        let resp_msg_itgt;
         if let &Attr::MessageIntegrity( ref x ) =  msg_itgt.unwrap() {
             resp_msg_itgt = MessageIntegrity {
                 hash: [0; 20],
@@ -645,7 +644,7 @@ impl Stun {
         }
 
         let fingerprint = packet.attrs.get(&0x8028);
-        let mut resp_fingerprint;
+        let resp_fingerprint;
         if let &Attr::Fingerprint( ref x ) =  fingerprint.unwrap() {
             resp_fingerprint = Fingerprint {
                 fingerprint: 0,
@@ -815,7 +814,7 @@ impl Stun {
         };
         */
 
-        let attr = match (attr_typ & 0xFFFF) {
+        let attr = match attr_typ & 0xFFFF {
             0x0006 => {
                 Attr::Username(Username::from_raw(rattr).unwrap())
             },
@@ -872,7 +871,7 @@ impl Stun {
                 Err(err) => None,
             };
 
-            if (attr.is_some()) {
+            if attr.is_some() {
                 packet.attrs.insert(attr_typ, attr.unwrap());
             }
 
@@ -900,7 +899,7 @@ impl Stun {
         let msg_len:u16 = BigEndian::read_u16(&raw[2..4]);
         let magic:u32 = BigEndian::read_u32(&raw[4..8]);
         /* Confirm this is a STUN message */
-        if (magic != MAGIC_COOKIE) {
+        if magic != MAGIC_COOKIE {
             return None
         }
 
