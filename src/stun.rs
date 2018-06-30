@@ -107,9 +107,6 @@ enum Attr {
     UnknownAttrs(UnknownAttrs),
 }
 
-trait StunAttr {
-}
-
 union Addr {
     v4: u32,
     v6: U128,
@@ -168,9 +165,6 @@ impl XorMappedAddrAttr {
     }
 }
 
-impl StunAttr for XorMappedAddrAttr {
-}
-
 /* TODO(tlam): Support SASLprep (can we use Rust's stringprep crate?) */
 /* Seems so, as they have a saslprep function */
 struct Username {
@@ -216,9 +210,6 @@ impl Username {
 
         raw_attr
     }
-}
-
-impl StunAttr for Username {
 }
 
 struct MessageIntegrity {
@@ -302,9 +293,6 @@ impl MessageIntegrity {
     }
 }
 
-impl StunAttr for MessageIntegrity {
-}
-
 struct Fingerprint {
     fingerprint: u32,
     raw_up_to: Vec<u8>,
@@ -349,9 +337,6 @@ impl Fingerprint {
     }
 }
 
-impl StunAttr for Fingerprint {
-}
-
 struct Priority {
     priority: u32,
 }
@@ -368,9 +353,6 @@ impl Priority {
     }
 }
 
-impl StunAttr for Priority {
-}
-
 /* Flag attribute */
 struct UseCandidate;
 
@@ -379,9 +361,6 @@ impl UseCandidate {
         return Some(UseCandidate {
         })
     }
-}
-
-impl StunAttr for UseCandidate {
 }
 
 struct IceControlled {
@@ -400,9 +379,6 @@ impl IceControlled {
     }
 }
 
-impl StunAttr for IceControlled {
-}
-
 struct IceControlling {
     tie_br: u64,
 }
@@ -419,9 +395,6 @@ impl IceControlling {
     }
 }
 
-impl StunAttr for IceControlling {
-}
-
 struct UnknownOptional;
 
 impl UnknownOptional {
@@ -430,18 +403,12 @@ impl UnknownOptional {
     }
 }
 
-impl StunAttr for UnknownOptional {
-}
-
 struct UnknownRequired;
 
 impl UnknownRequired {
     fn from_raw(_rattr: RawAttr) -> Option<UnknownRequired> {
         return Some(UnknownRequired)
     }
-}
-
-impl StunAttr for UnknownRequired {
 }
 
 struct ErrorAttr {
@@ -471,9 +438,6 @@ impl ErrorAttr {
     }
 }
 
-impl StunAttr for ErrorAttr {
-}
-
 struct UnknownAttrs {
     attrs: Vec<u16>,
 }
@@ -496,29 +460,12 @@ impl UnknownAttrs {
     }
 }
 
-impl StunAttr for UnknownAttrs {
-}
-
-/*impl StunAttr {
-    /*pub fn from_raw(typ: u16, raw: &[u8]) -> StunAttr {
-    }*/
-
-    fn is_mandatory(typ: u16) -> bool {
-        if typ >= 0x8000 && typ <= 0xFFFF {
-            return false
-        }
-
-        /* Mandatory to understand and parse, non-optional */
-        return true
-    }
-}*/
-
 pub struct StunPkt {
     msg_mt: MsgMethod,
     msg_cl: MsgClass,
     msg_len: u16,
     trans_id: U96,
-    attrs: HashMap<u16, /*Box<StunAttr>*/Attr>,
+    attrs: HashMap<u16, Attr>,
 }
 
 fn ntoh(raw: &[u8]) -> Vec<u8> {
@@ -779,40 +726,6 @@ impl Stun {
             precd_msg: None,
             passwd: None,
         };
-
-        /*
-        let attr:Box<StunAttr> = match (attr_typ & 0xFFFF) {
-            0x0006 => {
-                Box::new(Username::from_raw(rattr).unwrap())
-            },
-            0x0008 => {
-                rattr.precd_msg = Some(raw[0..attr_idx-4].to_owned());
-                //rattr.passwd = Some(self.passwd.to_owned());
-                Box::new(MessageIntegrity::from_raw(rattr).unwrap())
-            },
-            0x0020 => {
-                Box::new(XorMappedAddrAttr::from_raw(rattr).unwrap())
-            },
-            0x0024 => {
-                Box::new(Priority::from_raw(rattr).unwrap())
-            },
-            0x0025 => {
-                Box::new(UseCandidate::from_raw(rattr).unwrap())
-            },
-            0x0029 => {
-                Box::new(IceControlled::from_raw(rattr).unwrap())
-            },
-            0x002a => {
-                Box::new(IceControlling::from_raw(rattr).unwrap())
-            },
-            0x8028 => {
-                rattr.precd_msg = Some(raw[0..attr_idx-4].to_owned());
-
-                Box::new(Fingerprint::from_raw(rattr).unwrap())
-            },
-            _ => return Err(AttrErr{})
-        };
-        */
 
         let attr = match attr_typ & 0xFFFF {
             0x0006 => {
