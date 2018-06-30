@@ -84,6 +84,8 @@ impl MsgClass {
 
 }
 
+////////// Attributes //////////
+
 enum Attr {
 /*    XorMappedAddrAttr = 0x0020,
     Username = 0x0006,
@@ -105,6 +107,104 @@ enum Attr {
     UnknownRequired(UnknownRequired),
     ErrorAttr(ErrorAttr),
     UnknownAttrs(UnknownAttrs),
+}
+
+impl Attr {
+    fn xor_mapped_address(&self) -> Option<&XorMappedAddrAttr> {
+        if let &Attr::XorMappedAddrAttr(ref x) = self {
+            return Some(x)
+        } else {
+            return None
+        }
+    }
+
+    fn username(&self) -> Option<&Username> {
+        if let &Attr::Username(ref x) = self {
+            return Some(x)
+        } else {
+            return None
+        }
+    }
+
+    fn message_integrity(&self) -> Option<&MessageIntegrity> {
+        if let &Attr::MessageIntegrity(ref x) = self {
+            return Some(x)
+        } else {
+            return None
+        }
+    }
+
+    fn fingerprint(&self) -> Option<&Fingerprint> {
+        if let &Attr::Fingerprint(ref x) = self {
+            return Some(x)
+        } else {
+            return None
+        }
+    }
+
+    fn priority(&self) -> Option<&Priority> {
+        if let &Attr::Priority(ref x) = self {
+            return Some(x)
+        } else {
+            return None
+        }
+    }
+
+    fn use_candidate(&self) -> Option<&UseCandidate> {
+        if let &Attr::UseCandidate(ref x) = self {
+            return Some(x)
+        } else {
+            return None
+        }
+    }
+
+    fn ice_controlled(&self) -> Option<&IceControlled> {
+        if let &Attr::IceControlled(ref x) = self {
+            return Some(x)
+        } else {
+            return None
+        }
+    }
+
+    fn ice_controlling(&self) -> Option<&IceControlling> {
+        if let &Attr::IceControlling(ref x) = self {
+            return Some(x)
+        } else {
+            return None
+        }
+    }
+
+    fn unknown_optional(&self) -> Option<&UnknownOptional> {
+        if let &Attr::UnknownOptional(ref x) = self {
+            return Some(x)
+        } else {
+            return None
+        }
+    }
+
+    fn unknown_required(&self) -> Option<&UnknownRequired> {
+        if let &Attr::UnknownRequired(ref x) = self {
+            return Some(x)
+        } else {
+            return None
+        }
+    }
+
+    fn error(&self) -> Option<&ErrorAttr> {
+        if let &Attr::ErrorAttr(ref x) = self {
+            return Some(x)
+        } else {
+            return None
+        }
+    }
+
+    fn unknown(&self) -> Option<&UnknownAttrs> {
+        if let &Attr::UnknownAttrs(ref x) = self {
+            return Some(x)
+        } else {
+            return None
+        }
+    }
 }
 
 union Addr {
@@ -460,12 +560,64 @@ impl UnknownAttrs {
     }
 }
 
+////////// Attributes //////////
+
 pub struct StunPkt {
     msg_mt: MsgMethod,
     msg_cl: MsgClass,
     msg_len: u16,
     trans_id: U96,
     attrs: HashMap<u16, Attr>,
+}
+
+impl StunPkt {
+    fn get_xor_mapped_addr(&self) -> Option<&XorMappedAddrAttr> {
+        let attr = self.attrs.get(&0x0020);
+        match attr {
+            Some(x) => x.xor_mapped_address(),
+            _ => None,
+        }
+    }
+
+    fn get_username(&self) -> Option<&Username> {
+        let attr = self.attrs.get(&0x0006);
+        match attr {
+            Some(x) => x.username(),
+            _ => None,
+        }
+    }
+
+    fn get_message_integrity(&self) -> Option<&MessageIntegrity> {
+        let attr = self.attrs.get(&0x0008);
+        match attr {
+            Some(x) => x.message_integrity(),
+            _ => None,
+        }
+    }
+
+    fn get_fingerprint(&self) -> Option<&Fingerprint> {
+        let attr = self.attrs.get(&0x8028);
+        match attr {
+            Some(x) => x.fingerprint(),
+            _ => None,
+        }
+    }
+
+    fn get_error(&self) -> Option<&ErrorAttr> {
+        let attr = self.attrs.get(&0x0009);
+        match attr {
+            Some(x) => x.error(),
+            _ => None,
+        }
+    }
+
+    fn get_unknown(&self) -> Option<&UnknownAttrs> {
+        let attr = self.attrs.get(&0x000a);
+        match attr {
+            Some(x) => x.unknown(),
+            _ => None,
+        }
+    }
 }
 
 fn ntoh(raw: &[u8]) -> Vec<u8> {
@@ -570,9 +722,9 @@ impl Stun {
         };
         sucss_pkt.attrs.insert(0x0020, Attr::XorMappedAddrAttr(mapped_addr));
 
-        let msg_itgt = packet.attrs.get(&0x0008);
+        let msg_itgt = packet.get_message_integrity();
         let resp_msg_itgt;
-        if let &Attr::MessageIntegrity( ref x ) =  msg_itgt.unwrap() {
+        if let Some(x) = msg_itgt {
             resp_msg_itgt = MessageIntegrity {
                 hash: [0; 20],
                 raw_up_to: Vec::new(),
@@ -581,9 +733,9 @@ impl Stun {
             sucss_pkt.attrs.insert(0x0008, Attr::MessageIntegrity(resp_msg_itgt));
         }
 
-        let fingerprint = packet.attrs.get(&0x8028);
+        let fingerprint = packet.get_fingerprint();
         let resp_fingerprint;
-        if let &Attr::Fingerprint( ref x ) =  fingerprint.unwrap() {
+        if let Some(x) = fingerprint {
             resp_fingerprint = Fingerprint {
                 fingerprint: 0,
                 raw_up_to: Vec::new(),
@@ -607,30 +759,30 @@ impl Stun {
         BigEndian::write_u32(&mut raw_pkt[12..], pkt.trans_id.0[1]);
         BigEndian::write_u32(&mut raw_pkt[16..], pkt.trans_id.0[0]);
 
-        let username = pkt.attrs.get(&0x0006);
-        if let &Attr::Username( ref x ) = username.unwrap() {
+        let username = pkt.get_username();
+        if let Some(x) = username {
             let mut rattr = Username::to_raw(x);
             let msg_len:u16 = BigEndian::read_u16(&raw_pkt[2..4]);
             BigEndian::write_u16(&mut raw_pkt[2..4], msg_len + (rattr.len() as u16));
             raw_pkt.append(&mut rattr);
         }
 
-        let mapped_addr = pkt.attrs.get(&0x0020);
-        if let &Attr::XorMappedAddrAttr( ref x ) = mapped_addr.unwrap() {
+        let mapped_addr = pkt.get_xor_mapped_addr();
+        if let Some(x) = mapped_addr {
             let mut rattr = XorMappedAddrAttr::to_raw(x);
             let msg_len:u16 = BigEndian::read_u16(&raw_pkt[2..4]);
             BigEndian::write_u16(&mut raw_pkt[2..4], msg_len + (rattr.len() as u16));
             raw_pkt.append(&mut rattr);
         }
 
-        let msg_itgt = pkt.attrs.get(&0x0008);
-        if let &Attr::MessageIntegrity( ref x ) = msg_itgt.unwrap() {
+        let msg_itgt = pkt.get_message_integrity();
+        if let Some(x) = msg_itgt {
             let mut rattr = MessageIntegrity::to_raw(&mut raw_pkt, &self.passwd);
             raw_pkt.append(&mut rattr);
         }
 
-        let fingerprint = pkt.attrs.get(&0x8028);
-        if let &Attr::Fingerprint( ref x ) = fingerprint.unwrap() {
+        let fingerprint = pkt.get_fingerprint();
+        if let Some(x) = fingerprint {
             let mut rattr = Fingerprint::to_raw(&mut raw_pkt);
 
             raw_pkt.append(&mut rattr);
@@ -639,28 +791,18 @@ impl Stun {
         let new_len = (raw_pkt.len()-20) as u16;
         BigEndian::write_u16(&mut raw_pkt[2..4], new_len);
 
-        let error = pkt.attrs.get(&0x0009);
-        match error {
-            Some(e) => {
-                if let &Attr::ErrorAttr( ref x ) = e {
-                    let mut rattr = x.to_raw();
+        let error = pkt.get_error();
+        if let Some(x) = error {
+            let mut rattr = x.to_raw();
 
-                    raw_pkt.append(&mut rattr);
-                }
-            },
-            None => {},
+            raw_pkt.append(&mut rattr);
         }
 
-        let unkwn_attrs = pkt.attrs.get(&0x000a);
-        match unkwn_attrs {
-            Some(e) => {
-                if let &Attr::UnknownAttrs( ref x ) = e {
-                    let mut rattr = UnknownAttrs::to_raw(&x.attrs);
+        let unkwn_attrs = pkt.get_unknown();
+        if let Some(x) = unkwn_attrs {
+            let mut rattr = UnknownAttrs::to_raw(&x.attrs);
 
-                    raw_pkt.append(&mut rattr);
-                }
-            },
-            None => {},
+            raw_pkt.append(&mut rattr);
         }
 
         raw_pkt
@@ -668,8 +810,8 @@ impl Stun {
 
     fn validate(&self, packet: &StunPkt) ->  Option<StunErr> {
         /* 1. validate the FINGERPRINT, iff in use */
-        let fingerprint = packet.attrs.get(&0x8028);
-        if let &Attr::Fingerprint( ref x ) = fingerprint.unwrap() {
+        let fingerprint = packet.get_fingerprint();
+        if let Some(x) = fingerprint {
             if !x.is_valid() {
                 return Some(StunErr {
                     code: 400,
@@ -680,8 +822,8 @@ impl Stun {
 
         /* 2. Perform authentication of the message, using short-credentials
         in MESSAGE-INTEGRITY */
-        let msg_itgt = packet.attrs.get(&0x0008);
-        if let &Attr::MessageIntegrity( ref x ) =  msg_itgt.unwrap() {
+        let msg_itgt = packet.get_message_integrity();
+        if let Some(x) = msg_itgt {
             if !x.match_on_short_cred(&self.passwd) {
                 return Some(StunErr {
                     code: 400,
