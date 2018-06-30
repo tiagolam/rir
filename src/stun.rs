@@ -545,15 +545,6 @@ impl Stun {
             attrs: HashMap::new(),
         };
 
-        let username = packet.attrs.get(&0x0006);
-        let resp_user;
-        if let &Attr::Username( ref x ) =  username.unwrap() {
-            resp_user = Username {
-                username: x.username.to_owned(),
-            };
-
-            sucss_pkt.attrs.insert(0x0006, Attr::Username(resp_user));
-        }
         let addr;
         let fmly;
         match self.lsock {
@@ -937,11 +928,6 @@ mod test {
         /* Insert attributes manually, as to simulate when success() method in
          * Stun inserts the attributes expected for a successfull response */
 
-        let user = Username {
-            username: "test_user".to_owned(),
-        };
-        stun_pkt.attrs.insert(0x0006, Attr::Username(user));
-
         let mapped_addr = XorMappedAddrAttr {
                 fmly: 1, /* v4 */
                 port: 6000, /* 6000 */
@@ -976,8 +962,8 @@ mod test {
 
         assert!(stun_pkt.msg_mt == parsed_pkt.msg_mt);
         assert!(stun_pkt.msg_cl == parsed_pkt.msg_cl);
-        assert!(parsed_pkt.msg_len == 60);
+        assert!(parsed_pkt.msg_len == 44);
         assert!(stun_pkt.trans_id == parsed_pkt.trans_id);
-        assert!(parsed_pkt.attrs.len() == 4);
+        assert!(parsed_pkt.attrs.len() == 3);
     }
 }
