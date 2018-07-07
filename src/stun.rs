@@ -579,6 +579,10 @@ impl StunPkt {
         }
     }
 
+    fn put_xor_mapped_addr(&mut self, attr: XorMappedAddrAttr) {
+        self.attrs.insert(0x0020, Attr::XorMappedAddrAttr(attr));
+    }
+
     fn get_username(&self) -> Option<&Username> {
         let attr = self.attrs.get(&0x0006);
         match attr {
@@ -595,12 +599,20 @@ impl StunPkt {
         }
     }
 
+    fn put_message_integrity(&mut self, attr: MessageIntegrity) {
+        self.attrs.insert(0x0008, Attr::MessageIntegrity(attr));
+    }
+
     fn get_fingerprint(&self) -> Option<&Fingerprint> {
         let attr = self.attrs.get(&0x8028);
         match attr {
             Some(x) => x.fingerprint(),
             _ => None,
         }
+    }
+
+    fn put_fingerprint(&mut self, attr: Fingerprint) {
+        self.attrs.insert(0x8028, Attr::Fingerprint(attr));
     }
 
     fn get_error(&self) -> Option<&ErrorAttr> {
@@ -611,12 +623,20 @@ impl StunPkt {
         }
     }
 
+    fn put_error(&mut self, attr: ErrorAttr) {
+        self.attrs.insert(0x0009, Attr::ErrorAttr(attr));
+    }
+
     fn get_unknown(&self) -> Option<&UnknownAttrs> {
         let attr = self.attrs.get(&0x000a);
         match attr {
             Some(x) => x.unknown(),
             _ => None,
         }
+    }
+
+    fn put_unknown(&mut self, attr: UnknownAttrs) {
+        self.attrs.insert(0x000a, Attr::UnknownAttrs(attr));
     }
 }
 
@@ -678,11 +698,11 @@ impl Stun {
         };
 
         let err_attr = ErrorAttr::from_stunerr(&err);
-        err_pkt.attrs.insert(0x0009, Attr::ErrorAttr(err_attr));
+        err_pkt.put_error(err_attr);
 
         if err.unkwn_attrs.is_some() {
             let unkwn_attrs = UnknownAttrs::from_stunerr(err);
-            err_pkt.attrs.insert(0x000a, Attr::UnknownAttrs(unkwn_attrs));
+            err_pkt.put_unknown(unkwn_attrs);
         }
 
         err_pkt
@@ -720,7 +740,7 @@ impl Stun {
                 port: self.lsock.port(),
                 addr: addr,
         };
-        sucss_pkt.attrs.insert(0x0020, Attr::XorMappedAddrAttr(mapped_addr));
+        sucss_pkt.put_xor_mapped_addr(mapped_addr);
 
         let msg_itgt = packet.get_message_integrity();
         let resp_msg_itgt;
@@ -730,7 +750,7 @@ impl Stun {
                 raw_up_to: Vec::new(),
             };
 
-            sucss_pkt.attrs.insert(0x0008, Attr::MessageIntegrity(resp_msg_itgt));
+            sucss_pkt.put_message_integrity(resp_msg_itgt);
         }
 
         let fingerprint = packet.get_fingerprint();
@@ -741,7 +761,7 @@ impl Stun {
                 raw_up_to: Vec::new(),
             };
 
-            sucss_pkt.attrs.insert(0x8028, Attr::Fingerprint(resp_fingerprint));
+            sucss_pkt.put_fingerprint(resp_fingerprint);
         }
 
         sucss_pkt
@@ -1077,19 +1097,19 @@ mod test {
                     v4: 167772161 /* 10.0.0.1 */
                 },
         };
-        stun_pkt.attrs.insert(0x0020, Attr::XorMappedAddrAttr(mapped_addr));
+        stun_pkt.put_xor_mapped_addr(mapped_addr);
 
         let msg_itgt = MessageIntegrity {
             hash: [0; 20],
             raw_up_to: Vec::new(),
         };
-        stun_pkt.attrs.insert(0x0008, Attr::MessageIntegrity(msg_itgt));
+        stun_pkt.put_message_integrity(msg_itgt);
 
         let fingerprint = Fingerprint {
             fingerprint: 0,
             raw_up_to: Vec::new(),
         };
-        stun_pkt.attrs.insert(0x8028, Attr::Fingerprint(fingerprint));
+        stun_pkt.put_fingerprint(fingerprint);
 
         let payload = stun.to_raw(&stun_pkt);
         println!("Payload: {:?}", payload);
