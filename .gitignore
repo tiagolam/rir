@@ -4,3 +4,6 @@ Cargo.lock
 
 # Logging
 log/
+
+# Vim
+[._]*.sw[a-p]
