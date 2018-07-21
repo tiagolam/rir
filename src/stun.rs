@@ -205,6 +205,47 @@ impl Attr {
             return None
         }
     }
+
+    fn from_raw(attr_typ: u16, raw: &[u8], attr_idx: usize, mut rattr: RawAttr) -> Attr {
+        let attr = match attr_typ & 0xFFFF {
+            0x0006 => {
+                Attr::Username(Username::from_raw(rattr).unwrap())
+            },
+            0x0008 => {
+                rattr.precd_msg = Some(raw[0..attr_idx-4].to_owned());
+                Attr::MessageIntegrity(MessageIntegrity::from_raw(rattr).unwrap())
+            },
+            0x0020 => {
+                Attr::XorMappedAddrAttr(XorMappedAddrAttr::from_raw(rattr).unwrap())
+            },
+            0x0024 => {
+                Attr::Priority(Priority::from_raw(rattr).unwrap())
+            },
+            0x0025 => {
+                Attr::UseCandidate(UseCandidate::from_raw(rattr).unwrap())
+            },
+            0x0029 => {
+                Attr::IceControlled(IceControlled::from_raw(rattr).unwrap())
+            },
+            0x002a => {
+                Attr::IceControlling(IceControlling::from_raw(rattr).unwrap())
+            },
+            0x8028 => {
+                rattr.precd_msg = Some(raw[0..attr_idx-4].to_owned());
+
+                Attr::Fingerprint(Fingerprint::from_raw(rattr).unwrap())
+            },
+            v => {
+                if v >= 0x0000 && v <= 0x7FFF {
+                    Attr::UnknownRequired(UnknownRequired::from_raw(rattr).unwrap())
+                } else {
+                    Attr::UnknownOptional(UnknownOptional::from_raw(rattr).unwrap())
+                }
+            }
+        };
+
+        attr
+    }
 }
 
 union Addr {
@@ -880,43 +921,7 @@ impl Stun {
             passwd: None,
         };
 
-        let attr = match attr_typ & 0xFFFF {
-            0x0006 => {
-                Attr::Username(Username::from_raw(rattr).unwrap())
-            },
-            0x0008 => {
-                rattr.precd_msg = Some(raw[0..attr_idx-4].to_owned());
-                //rattr.passwd = Some(self.passwd.to_owned());
-                Attr::MessageIntegrity(MessageIntegrity::from_raw(rattr).unwrap())
-            },
-            0x0020 => {
-                Attr::XorMappedAddrAttr(XorMappedAddrAttr::from_raw(rattr).unwrap())
-            },
-            0x0024 => {
-                Attr::Priority(Priority::from_raw(rattr).unwrap())
-            },
-            0x0025 => {
-                Attr::UseCandidate(UseCandidate::from_raw(rattr).unwrap())
-            },
-            0x0029 => {
-                Attr::IceControlled(IceControlled::from_raw(rattr).unwrap())
-            },
-            0x002a => {
-                Attr::IceControlling(IceControlling::from_raw(rattr).unwrap())
-            },
-            0x8028 => {
-                rattr.precd_msg = Some(raw[0..attr_idx-4].to_owned());
-
-                Attr::Fingerprint(Fingerprint::from_raw(rattr).unwrap())
-            },
-            v => {
-                if v >= 0x0000 && v <= 0x7FFF {
-                    Attr::UnknownRequired(UnknownRequired::from_raw(rattr).unwrap())
-                } else {
-                    Attr::UnknownOptional(UnknownOptional::from_raw(rattr).unwrap())
-                }
-            }
-        };
+        let attr = Attr::from_raw(attr_typ, raw, attr_idx, rattr);
 
         return Ok(attr)
     }
