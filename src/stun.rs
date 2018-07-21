@@ -206,13 +206,12 @@ impl Attr {
         }
     }
 
-    fn from_raw(attr_typ: u16, raw: &[u8], attr_idx: usize, mut rattr: RawAttr) -> Attr {
+    fn from_raw(attr_typ: u16, rattr: RawAttr) -> Attr {
         let attr = match attr_typ & 0xFFFF {
             0x0006 => {
                 Attr::Username(Username::from_raw(rattr).unwrap())
             },
             0x0008 => {
-                rattr.precd_msg = Some(raw[0..attr_idx-4].to_owned());
                 Attr::MessageIntegrity(MessageIntegrity::from_raw(rattr).unwrap())
             },
             0x0020 => {
@@ -231,8 +230,6 @@ impl Attr {
                 Attr::IceControlling(IceControlling::from_raw(rattr).unwrap())
             },
             0x8028 => {
-                rattr.precd_msg = Some(raw[0..attr_idx-4].to_owned());
-
                 Attr::Fingerprint(Fingerprint::from_raw(rattr).unwrap())
             },
             v => {
@@ -373,7 +370,8 @@ impl MessageIntegrity {
 
         /* match_on_short_cred needs to change the length of the message in order to mimmic what
          * was done on the other side. Thus, we need to own the data here */
-        let raw = rattr.precd_msg.unwrap();
+        let mut raw = vec![0; rattr.precd_msg.len()];
+        raw.copy_from_slice(rattr.precd_msg);
         /*if !MessageIntegrity::match_on_short_cred(raw_attr, raw, passwd) {
             return None
         }*/
@@ -441,13 +439,15 @@ struct Fingerprint {
 
 impl Fingerprint {
     fn from_raw(rattr: RawAttr) -> Option<Fingerprint> {
-        let raw = &rattr.attr_raw;
         /* Find value in attribute */
-        let exp = BigEndian::read_u32(&raw[0..4]);
+        let exp = BigEndian::read_u32(&rattr.attr_raw[0..4]);
+
+        let mut raw = vec![0; rattr.precd_msg.len()];
+        raw.copy_from_slice(rattr.precd_msg);
 
         return Some(Fingerprint {
             fingerprint: exp,
-            raw_up_to: rattr.precd_msg.unwrap(),
+            raw_up_to: raw,
         })
     }
 
@@ -695,10 +695,9 @@ struct U96 ([u32;3]);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct U128 ([u32;4]);
 
-struct RawAttr {
-    attr_raw: Vec<u8>,
-    precd_msg: Option<Vec<u8>>,
-    passwd: Option<String>,
+struct RawAttr<'a> {
+    attr_raw: &'a [u8],
+    precd_msg: &'a [u8],
 }
 
 struct StunErr {
@@ -915,13 +914,12 @@ impl Stun {
 
     fn parse_attr(&self, raw: &[u8], attr_idx: usize, attr_len: usize,
                   attr_typ: u16) -> Result<Attr, StunErr> {
-        let mut rattr = RawAttr {
-            attr_raw: raw[attr_idx..attr_idx+attr_len].to_owned(),
-            precd_msg: None,
-            passwd: None,
+        let rattr = RawAttr {
+            attr_raw: &raw[attr_idx..attr_idx+attr_len],
+            precd_msg: &raw[0..attr_idx-4],
         };
 
-        let attr = Attr::from_raw(attr_typ, raw, attr_idx, rattr);
+        let attr = Attr::from_raw(attr_typ, rattr);
 
         return Ok(attr)
     }
