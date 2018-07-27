@@ -25,8 +25,8 @@ use stringprep;
 use crc::crc32;
 use hmacsha1;
 
-// In Network byte order
-const MAGIC_COOKIE:u32 = 0x2112A442;
+const MAGIC_COOKIE:u32 = 0x2112A442; /* In network byte order */
+const SENSIBLE_LEN:u16 = 0x0003;
 const DATA_OFFSET:u8 = 20;
 const FINGERPRINT_XOR:u32 = 0x5354554e;
 
@@ -896,7 +896,7 @@ impl Stun {
         let mut unkwn_attrs: Vec<u16> = Vec::new();
         for (k, v) in packet.attrs.iter() {
             if k >= &0x0000 && k <= &0x7FFF {
-                if let &Attr::UnknownRequired( _ ) = v {
+                if let &Attr::UnknownRequired(_) = v {
                     unkwn_attrs.push(*k);
                 }
             }
@@ -957,7 +957,7 @@ impl Stun {
     /// Parse the 'raw' payload into a StunPkt
     pub fn parse_stun(&self, raw: &[u8]) -> Option<StunPkt> {
         let zeros:u8 = raw[0] & 0xC0;
-        // If not zero, then this can't be a STUN message
+        /* If not zero, this can't be a STUN message */
         if zeros != 0 {
             return None
         }
@@ -967,13 +967,27 @@ impl Stun {
         let msg_cl = MsgClass::from_raw(msg_typ);
         let msg_len:u16 = BigEndian::read_u16(&raw[2..4]);
         let magic:u32 = BigEndian::read_u32(&raw[4..8]);
-        /* Confirm this is a STUN message */
+
+        /* Magic cookie must be present in any valid STUN message */
         if magic != MAGIC_COOKIE {
             return None
         }
 
-        //TODO(tlam): Check the message length is sensible
-        
+        /* Check the message length is sensible (last two bits must be zero) */
+        if (msg_len & SENSIBLE_LEN) != 0 {
+            return None
+        }
+
+        /* Verify message class and method are not "Unknown" */
+        if msg_mt == MsgMethod::Unknown {
+            return None
+        }
+        if msg_cl == MsgClass::Unknown {
+            return None
+        }
+
+        /* At this stage, initial and preliminary validation has passed */
+
         let le = ntoh(&raw[8..20]);
         let mut a:[u32;3] = [0; 3];
         a[0] = LittleEndian::read_u32(&le[0..4]);
@@ -990,22 +1004,6 @@ impl Stun {
             trans_id: trans_id,
             attrs: HashMap::new(),
         };
-
-        /* TODO(tlam): Verify Msg class and emthod are not "unknown" */
-        /*
-        match msg_mt {
-            /* Message method not supported, returning error */
-            MsgMethod::Unknown => return,
-            // TODO(tlam): Supportonly what's strictly needed for the connectivity checks
-            _                  => pkt.msg_mt = msg_mt,
-        };
-        match msg_cl {
-            /* Message method not supported, returning error */
-            MsgClass::Unknown => return,
-            // TODO(tlam): Supportonly what's strictly needed for the connectivity checks
-            _                 => pkt.msg_cl = msg_cl,
-        };
-        */
 
         /* Header is always 20 bytes, rest of packet are attributes */
         self.parse_attrs(&raw, msg_len as usize, &mut pkt);
