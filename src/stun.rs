@@ -679,6 +679,21 @@ impl StunPkt {
     fn put_unknown(&mut self, attr: UnknownAttrs) {
         self.attrs.insert(0x000a, Attr::UnknownAttrs(attr));
     }
+
+    fn is_valid(&self) -> bool {
+        /* Validate the FINGERPRINT */
+        let fingerprint = self.get_fingerprint();
+        match fingerprint {
+            Some(x) => {
+                if !x.is_valid() {
+                    return false
+                }
+            },
+            None => return false,
+        }
+
+        true
+    }
 }
 
 fn ntoh(raw: &[u8]) -> Vec<u8> {
@@ -868,31 +883,29 @@ impl Stun {
         raw_pkt
     }
 
-    fn validate(&self, packet: &StunPkt) ->  Option<StunErr> {
-        /* 1. validate the FINGERPRINT, iff in use */
-        let fingerprint = packet.get_fingerprint();
-        if let Some(x) = fingerprint {
-            if !x.is_valid() {
-                return Some(StunErr {
-                    code: 400,
-                    unkwn_attrs: None,
-                })
-            }
-        }
-
-        /* 2. Perform authentication of the message, using short-credentials
-        in MESSAGE-INTEGRITY */
+    fn validate(&self, packet: &StunPkt) -> Result<(), StunErr> {
+        /* 1. Both USERNAME and MESSAGE-INTEGRITY must be present */
+        let username = packet.get_username();
         let msg_itgt = packet.get_message_integrity();
-        if let Some(x) = msg_itgt {
-            if !x.match_on_short_cred(&self.passwd) {
-                return Some(StunErr {
-                    code: 400,
-                    unkwn_attrs: None,
-                })
-            }
+        if username.is_none() || msg_itgt.is_none() {
+            return Err(StunErr {
+                code: 400,
+                unkwn_attrs: None,
+            })
         }
 
-        /* Unknown required attributes should be saved to be sent with Error */
+        //TODO(tlam): Check username is valid
+
+        /* 3. Match MESSAGE-INTEGRITY credentials */
+        let msg_itgt = msg_itgt.unwrap();
+        if !msg_itgt.match_on_short_cred(&self.passwd) {
+            return Err(StunErr {
+                code: 401,
+                unkwn_attrs: None,
+            })
+        }
+
+        /* 4. Search and store unknown but required attributes */
         let mut unkwn_attrs: Vec<u16> = Vec::new();
         for (k, v) in packet.attrs.iter() {
             if k >= &0x0000 && k <= &0x7FFF {
@@ -903,13 +916,14 @@ impl Stun {
         }
 
         if !unkwn_attrs.is_empty() {
-            return Some(StunErr {
+            return Err(StunErr {
                 code: 420,
                 unkwn_attrs: Some(unkwn_attrs),
             })
         }
 
-        None
+        /* Validation succeeded, no error to report */
+        Ok(())
     }
 
     fn parse_attr(&self, raw: &[u8], attr_idx: usize, attr_len: usize,
@@ -1018,20 +1032,20 @@ impl Stun {
         }
 
         let pkt = pkt.unwrap();
-        /* TODO Validate parsed packet based on rfc5389, section 7.3 */
-        let is_valid = self.validate(&pkt);
+        if !pkt.is_valid() {
+            return None
+        }
 
-        /* Based on the success or error, generate the response */
-        match is_valid {
-            None => {
-                /* Generate sucessfull response */
+        match self.validate(&pkt) {
+            Ok(_) => {
+                /* Generate successful response */
                 let succ_pkt = self.success(&pkt);
 
                 Some(self.to_raw(&succ_pkt))
             },
-            Some(x) => {
+            Err(e) => {
                 /* Generate error response */
-                let err_pkt = self.error(&pkt, x);
+                let err_pkt = self.error(&pkt, e);
 
                 Some(self.to_raw(&err_pkt))
             }
