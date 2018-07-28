@@ -883,7 +883,29 @@ impl Stun {
         raw_pkt
     }
 
-    fn validate(&self, packet: &StunPkt) -> Result<(), StunErr> {
+    fn val_unknown_attrs(&self, packet: &StunPkt) -> Result<(), StunErr> {
+        /* Search and store unknown but required attributes */
+        let mut unkwn_attrs: Vec<u16> = Vec::new();
+        for (k, v) in packet.attrs.iter() {
+            if k >= &0x0000 && k <= &0x7FFF {
+                if let &Attr::UnknownRequired(_) = v {
+                    unkwn_attrs.push(*k);
+                }
+            }
+        }
+
+        if !unkwn_attrs.is_empty() {
+            return Err(StunErr {
+                code: 420,
+                unkwn_attrs: Some(unkwn_attrs),
+            })
+        }
+
+        /* Validation succeeded, no error to report */
+        Ok(())
+    }
+
+    fn authenticate(&self, packet: &StunPkt) -> Result<(), StunErr> {
         /* 1. Both USERNAME and MESSAGE-INTEGRITY must be present */
         let username = packet.get_username();
         let msg_itgt = packet.get_message_integrity();
@@ -905,24 +927,7 @@ impl Stun {
             })
         }
 
-        /* 4. Search and store unknown but required attributes */
-        let mut unkwn_attrs: Vec<u16> = Vec::new();
-        for (k, v) in packet.attrs.iter() {
-            if k >= &0x0000 && k <= &0x7FFF {
-                if let &Attr::UnknownRequired(_) = v {
-                    unkwn_attrs.push(*k);
-                }
-            }
-        }
-
-        if !unkwn_attrs.is_empty() {
-            return Err(StunErr {
-                code: 420,
-                unkwn_attrs: Some(unkwn_attrs),
-            })
-        }
-
-        /* Validation succeeded, no error to report */
+        /* Authentication succeeded, no error to report */
         Ok(())
     }
 
@@ -1025,29 +1030,47 @@ impl Stun {
         Some(pkt)
     }
 
-    pub fn process_stun(&self, raw: &[u8]) -> Option<Vec<u8>> {
+    pub fn process_stun(&self, raw: &[u8]) -> (bool, Option<Vec<u8>>) {
         let pkt = self.parse_stun(raw);
         if pkt.is_none() {
-            return None
+            return (false, None)
         }
 
         let pkt = pkt.unwrap();
         if !pkt.is_valid() {
-            return None
+            return (false, None)
         }
 
-        match self.validate(&pkt) {
-            Ok(_) => {
-                /* Generate successful response */
-                let succ_pkt = self.success(&pkt);
+        if pkt.msg_cl == MsgClass::Indication {
+            /* In rfc5245, the Binding Indications used for keepalives do not
+             * use any authentication mechanism. */
 
-                Some(self.to_raw(&succ_pkt))
-            },
-            Err(e) => {
-                /* Generate error response */
+            /* Any unknown required attributes is ignored */
+            let _ = self.val_unknown_attrs(&pkt);
+
+            return (true, None)
+        } else {
+            /* Requests need to be be authenticated first, and then checked for
+             * unknown but required attributes.*/
+
+            let res = self.authenticate(&pkt);
+            if let Err(e) = res {
                 let err_pkt = self.error(&pkt, e);
 
-                Some(self.to_raw(&err_pkt))
+                return (true, Some(self.to_raw(&err_pkt)))
+            }
+
+            match self.val_unknown_attrs(&pkt) {
+                Ok(_) => {
+                    let succ_pkt = self.success(&pkt);
+
+                    (true, Some(self.to_raw(&succ_pkt)))
+                },
+                Err(e) => {
+                    let err_pkt = self.error(&pkt, e);
+
+                    (true, Some(self.to_raw(&err_pkt)))
+                }
             }
         }
     }

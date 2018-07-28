@@ -228,7 +228,12 @@ impl Transport for StunWrapper {
     fn recv(&self, payload: &mut [u8]) -> (usize, Option<SocketAddr>) {
         let (size, addr) = self.transport.recv(payload);
 
-        let raw_msg = self.stun.process_stun(&payload[0..size]);
+        let (is_stun, raw_msg) = self.stun.process_stun(&payload[0..size]);
+        /* This is a STUN message which has been processed already */
+        if is_stun && raw_msg.is_none() {
+            return (0, None);
+        }
+
         if raw_msg.is_none() {
             let mut rtp: Vec<u8> = vec![0; size];
             rtp[0..size].clone_from_slice(&payload[0..size]);
