@@ -405,13 +405,13 @@ impl MessageIntegrity {
         let ped = ped.unwrap().into_owned();
         // 2. Modify messasge len to point to MessageIntegrity's end
         let mut raw = self.raw_up_to.clone();
-        /* msg_len = size of msg up to attribute - header length + attribute
-         * size (attribute header + hash size) */
+        // msg_len = size of msg up to attribute - header length + attribute
+        // size (attribute header + hash size)
         let msg_len = raw.len() - DATA_OFFSET + 4 + 20;
         BigEndian::write_u16(&mut raw[2..4], (msg_len as u16));
         // 3. Hash 2. using 1. as key
         let mhash = hmacsha1::hmac_sha1(ped.as_bytes(), &raw);
-        /* Sha computed doesn't match the expected, return error */
+        // Sha computed doesn't match the expected, return error
         if mhash != self.hash {
             return false
         }
@@ -427,13 +427,15 @@ impl MessageIntegrity {
         let ped = ped.unwrap().into_owned();
         // 2. Modify message len to point to MessageIntegrity's end
         let msg_len:u16 = BigEndian::read_u16(&raw[2..4]);
-        /* msg_len = size of message + size of attribute header + hash size */
+        // msg_len = size of message + size of attribute header + hash size
         BigEndian::write_u16(&mut raw[2..4], msg_len + 4 + 20);
         // 3. Hash 2. using 1. as key
         let hash = hmacsha1::hmac_sha1(ped.as_bytes(), &raw);
 
-        let mut raw_attr: Vec<u8> = vec![0; 4];
+        // 4. Revert back the header length to the old value
+        BigEndian::write_u16(&mut raw[2..4], msg_len);
 
+        let mut raw_attr: Vec<u8> = vec![0; 4];
         BigEndian::write_u16(&mut raw_attr[0..], 0x0008);
         BigEndian::write_u16(&mut raw_attr[2..], 0x14);
         raw_attr.extend_from_slice(&hash);
@@ -474,13 +476,15 @@ impl Fingerprint {
 
     fn to_raw(raw: &mut [u8]) -> Vec<u8> {
         let msg_len = BigEndian::read_u16(&raw[2..4]);
-        /* msg_len = size of message + size of attribute header + CRC size */
+        // msg_len = size of message + size of attribute header + CRC size
         BigEndian::write_u16(&mut raw[2..4], msg_len + 4 + 4);
 
         let crc = crc32::checksum_ieee(&raw) ^ FINGERPRINT_XOR;
 
-        let mut raw_attr: Vec<u8> = vec![0; 8];
+        // Revert back the header length to the old value
+        BigEndian::write_u16(&mut raw[2..4], msg_len);
 
+        let mut raw_attr: Vec<u8> = vec![0; 8];
         BigEndian::write_u16(&mut raw_attr[0..], 0x8028);
         BigEndian::write_u16(&mut raw_attr[2..], 0x4);
         BigEndian::write_u32(&mut raw_attr[4..], crc);
@@ -848,44 +852,55 @@ impl Stun {
         let username = pkt.get_username();
         if let Some(x) = username {
             let mut rattr = Username::to_raw(x);
-            let msg_len:u16 = BigEndian::read_u16(&raw_pkt[2..4]);
-            BigEndian::write_u16(&mut raw_pkt[2..4], msg_len + (rattr.len() as u16));
             raw_pkt.append(&mut rattr);
+
+            let new_len = (raw_pkt.len() - DATA_OFFSET) as u16;
+            BigEndian::write_u16(&mut raw_pkt[2..4], new_len);
         }
 
         let mapped_addr = pkt.get_xor_mapped_addr();
         if let Some(x) = mapped_addr {
             let mut rattr = XorMappedAddrAttr::to_raw(x);
-            let msg_len:u16 = BigEndian::read_u16(&raw_pkt[2..4]);
-            BigEndian::write_u16(&mut raw_pkt[2..4], msg_len + (rattr.len() as u16));
             raw_pkt.append(&mut rattr);
+
+            let new_len = (raw_pkt.len() - DATA_OFFSET) as u16;
+            BigEndian::write_u16(&mut raw_pkt[2..4], new_len);
         }
 
         let msg_itgt = pkt.get_message_integrity();
         if let Some(x) = msg_itgt {
             let mut rattr = MessageIntegrity::to_raw(&mut raw_pkt, &self.passwd);
             raw_pkt.append(&mut rattr);
+
+            let new_len = (raw_pkt.len() - DATA_OFFSET) as u16;
+            BigEndian::write_u16(&mut raw_pkt[2..4], new_len);
         }
 
         let fingerprint = pkt.get_fingerprint();
         if let Some(x) = fingerprint {
             let mut rattr = Fingerprint::to_raw(&mut raw_pkt);
             raw_pkt.append(&mut rattr);
-        }
 
-        let new_len = (raw_pkt.len() - DATA_OFFSET) as u16;
-        BigEndian::write_u16(&mut raw_pkt[2..4], new_len);
+            let new_len = (raw_pkt.len() - DATA_OFFSET) as u16;
+            BigEndian::write_u16(&mut raw_pkt[2..4], new_len);
+        }
 
         let error = pkt.get_error();
         if let Some(x) = error {
             let mut rattr = x.to_raw();
             raw_pkt.append(&mut rattr);
+
+            let new_len = (raw_pkt.len() - DATA_OFFSET) as u16;
+            BigEndian::write_u16(&mut raw_pkt[2..4], new_len);
         }
 
         let unkwn_attrs = pkt.get_unknown();
         if let Some(x) = unkwn_attrs {
             let mut rattr = UnknownAttrs::to_raw(&x.attrs);
             raw_pkt.append(&mut rattr);
+
+            let new_len = (raw_pkt.len() - DATA_OFFSET) as u16;
+            BigEndian::write_u16(&mut raw_pkt[2..4], new_len);
         }
 
         raw_pkt
