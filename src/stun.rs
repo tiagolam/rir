@@ -294,16 +294,16 @@ impl XorMappedAddrAttr {
         }
     }
 
-    fn to_raw(mapped_addr: &XorMappedAddrAttr) -> Vec<u8> {
+    fn to_raw(&self) -> Vec<u8> {
         let mut raw_attr: Vec<u8> = vec![0; 12];
 
         BigEndian::write_u16(&mut raw_attr[0..], 0x0020);
         BigEndian::write_u16(&mut raw_attr[2..], 0x8);
         raw_attr[4] = 0x0;
-        raw_attr[5] = mapped_addr.fmly;
-        BigEndian::write_u16(&mut raw_attr[6..], mapped_addr.port ^ ((MAGIC_COOKIE >> 16) as u16));
+        raw_attr[5] = self.fmly;
+        BigEndian::write_u16(&mut raw_attr[6..], self.port ^ ((MAGIC_COOKIE >> 16) as u16));
         unsafe {
-            BigEndian::write_u32(&mut raw_attr[8..], mapped_addr.addr.v4 ^ MAGIC_COOKIE);
+            BigEndian::write_u32(&mut raw_attr[8..], self.addr.v4 ^ MAGIC_COOKIE);
         }
 
         raw_attr
@@ -335,22 +335,22 @@ impl Username {
         })
     }
 
-    fn to_raw(user: &Username) -> Vec<u8> {
+    fn to_raw(&self) -> Vec<u8> {
         let attr_len;
         let padding;
-        if user.username.len() % 4 == 0 {
+        if self.username.len() % 4 == 0 {
             padding = 0;
-            attr_len = user.username.len();
+            attr_len = self.username.len();
         } else {
-            padding = 4 - (user.username.len() % 4);
-            attr_len = user.username.len() + padding;
+            padding = 4 - (self.username.len() % 4);
+            attr_len = self.username.len() + padding;
         }
 
         let mut raw_attr: Vec<u8> = vec![0; 4];
 
         BigEndian::write_u16(&mut raw_attr[0..], 0x0006);
         BigEndian::write_u16(&mut raw_attr[2..], (attr_len-padding) as u16);
-        raw_attr.append(&mut user.username.to_owned().into_bytes());
+        raw_attr.append(&mut self.username.to_owned().into_bytes());
         raw_attr.append(&mut vec![0;padding]);
 
         raw_attr
@@ -419,7 +419,7 @@ impl MessageIntegrity {
         true
     }
 
-    fn to_raw(raw: &mut [u8], passwd: &str) -> Vec<u8> {
+    fn to_raw(&self, raw: &mut [u8], passwd: &str) -> Vec<u8> {
         let ped = stringprep::saslprep(passwd);
         if ped.is_err() {
             return vec![0;1]
@@ -474,7 +474,7 @@ impl Fingerprint {
         true
     }
 
-    fn to_raw(raw: &mut [u8]) -> Vec<u8> {
+    fn to_raw(&self, raw: &mut [u8]) -> Vec<u8> {
         let msg_len = BigEndian::read_u16(&raw[2..4]);
         // msg_len = size of message + size of attribute header + CRC size
         BigEndian::write_u16(&mut raw[2..4], msg_len + 4 + 4);
@@ -729,7 +729,7 @@ impl StunPkt {
 
         let username = self.get_username();
         if let Some(x) = username {
-            let mut rattr = Username::to_raw(x);
+            let mut rattr = x.to_raw();
             raw_pkt.append(&mut rattr);
 
             StunPkt::set_raw_hdr_len(&mut raw_pkt);
@@ -737,23 +737,23 @@ impl StunPkt {
 
         let mapped_addr = self.get_xor_mapped_addr();
         if let Some(x) = mapped_addr {
-            let mut rattr = XorMappedAddrAttr::to_raw(x);
+            let mut rattr = x.to_raw();
             raw_pkt.append(&mut rattr);
 
             StunPkt::set_raw_hdr_len(&mut raw_pkt);
         }
 
         let msg_itgt = self.get_message_integrity();
-        if let Some(_) = msg_itgt {
-            let mut rattr = MessageIntegrity::to_raw(&mut raw_pkt, passwd);
+        if let Some(x) = msg_itgt {
+            let mut rattr = x.to_raw(&mut raw_pkt, passwd);
             raw_pkt.append(&mut rattr);
 
             StunPkt::set_raw_hdr_len(&mut raw_pkt);
         }
 
         let fingerprint = self.get_fingerprint();
-        if let Some(_) = fingerprint {
-            let mut rattr = Fingerprint::to_raw(&mut raw_pkt);
+        if let Some(x) = fingerprint {
+            let mut rattr = x.to_raw(&mut raw_pkt);
             raw_pkt.append(&mut rattr);
 
             StunPkt::set_raw_hdr_len(&mut raw_pkt);
