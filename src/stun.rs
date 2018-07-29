@@ -880,25 +880,19 @@ impl Stun {
         };
         sucss_pkt.put_xor_mapped_addr(mapped_addr);
 
-        let msg_itgt = packet.get_message_integrity();
-        let resp_msg_itgt;
-        if let Some(x) = msg_itgt {
-            resp_msg_itgt = MessageIntegrity {
-                hash: [0; 20],
-                raw_up_to: Vec::new(),
-            };
+        let msg_itgt = MessageIntegrity {
+            hash: [0; 20],
+            raw_up_to: Vec::new(),
+        };
+        sucss_pkt.put_message_integrity(msg_itgt);
 
-            sucss_pkt.put_message_integrity(resp_msg_itgt);
-        }
-
+        // FINGERPRINT is only used if the request had it
         let fingerprint = packet.get_fingerprint();
-        let resp_fingerprint;
         if let Some(x) = fingerprint {
-            resp_fingerprint = Fingerprint {
+            let resp_fingerprint = Fingerprint {
                 fingerprint: 0,
                 raw_up_to: Vec::new(),
             };
-
             sucss_pkt.put_fingerprint(resp_fingerprint);
         }
 
