@@ -709,6 +709,74 @@ impl StunPkt {
 
         true
     }
+
+    fn set_raw_hdr_len(raw: &mut [u8]) {
+        let new_len = (raw.len() - DATA_OFFSET) as u16;
+        BigEndian::write_u16(&mut raw[2..4], new_len);
+    }
+
+    fn to_raw(&self, passwd: &str) -> Vec<u8> {
+        let mut raw_pkt:Vec<u8> = vec![0; DATA_OFFSET];
+
+        let msg_mt = MsgMethod::to_raw(&self.msg_mt);
+        let msg_cl = MsgClass::to_raw(&self.msg_cl);
+        BigEndian::write_u16(&mut raw_pkt[0..], msg_mt | msg_cl);
+        BigEndian::write_u16(&mut raw_pkt[2..], 0);
+        BigEndian::write_u32(&mut raw_pkt[4..], MAGIC_COOKIE);
+        BigEndian::write_u32(&mut raw_pkt[8..], self.trans_id.0[2]);
+        BigEndian::write_u32(&mut raw_pkt[12..], self.trans_id.0[1]);
+        BigEndian::write_u32(&mut raw_pkt[16..], self.trans_id.0[0]);
+
+        let username = self.get_username();
+        if let Some(x) = username {
+            let mut rattr = Username::to_raw(x);
+            raw_pkt.append(&mut rattr);
+
+            StunPkt::set_raw_hdr_len(&mut raw_pkt);
+        }
+
+        let mapped_addr = self.get_xor_mapped_addr();
+        if let Some(x) = mapped_addr {
+            let mut rattr = XorMappedAddrAttr::to_raw(x);
+            raw_pkt.append(&mut rattr);
+
+            StunPkt::set_raw_hdr_len(&mut raw_pkt);
+        }
+
+        let msg_itgt = self.get_message_integrity();
+        if let Some(_) = msg_itgt {
+            let mut rattr = MessageIntegrity::to_raw(&mut raw_pkt, passwd);
+            raw_pkt.append(&mut rattr);
+
+            StunPkt::set_raw_hdr_len(&mut raw_pkt);
+        }
+
+        let fingerprint = self.get_fingerprint();
+        if let Some(_) = fingerprint {
+            let mut rattr = Fingerprint::to_raw(&mut raw_pkt);
+            raw_pkt.append(&mut rattr);
+
+            StunPkt::set_raw_hdr_len(&mut raw_pkt);
+        }
+
+        let error = self.get_error();
+        if let Some(x) = error {
+            let mut rattr = x.to_raw();
+            raw_pkt.append(&mut rattr);
+
+            StunPkt::set_raw_hdr_len(&mut raw_pkt);
+        }
+
+        let unkwn_attrs = self.get_unknown();
+        if let Some(x) = unkwn_attrs {
+            let mut rattr = UnknownAttrs::to_raw(&x.attrs);
+            raw_pkt.append(&mut rattr);
+
+            StunPkt::set_raw_hdr_len(&mut raw_pkt);
+        }
+
+        raw_pkt
+    }
 }
 
 fn ntoh(raw: &[u8]) -> Vec<u8> {
@@ -835,75 +903,6 @@ impl Stun {
         }
 
         sucss_pkt
-    }
-
-    fn to_raw(&self, pkt: &StunPkt) -> Vec<u8> {
-        let mut raw_pkt:Vec<u8> = vec![0; DATA_OFFSET];
-
-        let msg_mt = MsgMethod::to_raw(&pkt.msg_mt);
-        let msg_cl = MsgClass::to_raw(&pkt.msg_cl);
-        BigEndian::write_u16(&mut raw_pkt[0..], msg_mt | msg_cl);
-        BigEndian::write_u16(&mut raw_pkt[2..], 0);
-        BigEndian::write_u32(&mut raw_pkt[4..], MAGIC_COOKIE);
-        BigEndian::write_u32(&mut raw_pkt[8..], pkt.trans_id.0[2]);
-        BigEndian::write_u32(&mut raw_pkt[12..], pkt.trans_id.0[1]);
-        BigEndian::write_u32(&mut raw_pkt[16..], pkt.trans_id.0[0]);
-
-        let username = pkt.get_username();
-        if let Some(x) = username {
-            let mut rattr = Username::to_raw(x);
-            raw_pkt.append(&mut rattr);
-
-            let new_len = (raw_pkt.len() - DATA_OFFSET) as u16;
-            BigEndian::write_u16(&mut raw_pkt[2..4], new_len);
-        }
-
-        let mapped_addr = pkt.get_xor_mapped_addr();
-        if let Some(x) = mapped_addr {
-            let mut rattr = XorMappedAddrAttr::to_raw(x);
-            raw_pkt.append(&mut rattr);
-
-            let new_len = (raw_pkt.len() - DATA_OFFSET) as u16;
-            BigEndian::write_u16(&mut raw_pkt[2..4], new_len);
-        }
-
-        let msg_itgt = pkt.get_message_integrity();
-        if let Some(x) = msg_itgt {
-            let mut rattr = MessageIntegrity::to_raw(&mut raw_pkt, &self.passwd);
-            raw_pkt.append(&mut rattr);
-
-            let new_len = (raw_pkt.len() - DATA_OFFSET) as u16;
-            BigEndian::write_u16(&mut raw_pkt[2..4], new_len);
-        }
-
-        let fingerprint = pkt.get_fingerprint();
-        if let Some(x) = fingerprint {
-            let mut rattr = Fingerprint::to_raw(&mut raw_pkt);
-            raw_pkt.append(&mut rattr);
-
-            let new_len = (raw_pkt.len() - DATA_OFFSET) as u16;
-            BigEndian::write_u16(&mut raw_pkt[2..4], new_len);
-        }
-
-        let error = pkt.get_error();
-        if let Some(x) = error {
-            let mut rattr = x.to_raw();
-            raw_pkt.append(&mut rattr);
-
-            let new_len = (raw_pkt.len() - DATA_OFFSET) as u16;
-            BigEndian::write_u16(&mut raw_pkt[2..4], new_len);
-        }
-
-        let unkwn_attrs = pkt.get_unknown();
-        if let Some(x) = unkwn_attrs {
-            let mut rattr = UnknownAttrs::to_raw(&x.attrs);
-            raw_pkt.append(&mut rattr);
-
-            let new_len = (raw_pkt.len() - DATA_OFFSET) as u16;
-            BigEndian::write_u16(&mut raw_pkt[2..4], new_len);
-        }
-
-        raw_pkt
     }
 
     fn val_unknown_attrs(&self, packet: &StunPkt) -> Result<(), StunErr> {
@@ -1080,19 +1079,19 @@ impl Stun {
             if let Err(e) = res {
                 let err_pkt = self.error(&pkt, e);
 
-                return (true, Some(self.to_raw(&err_pkt)))
+                return (true, Some(err_pkt.to_raw(&self.passwd)))
             }
 
             match self.val_unknown_attrs(&pkt) {
                 Ok(_) => {
                     let succ_pkt = self.success(&pkt);
 
-                    (true, Some(self.to_raw(&succ_pkt)))
+                    (true, Some(succ_pkt.to_raw(&self.passwd)))
                 },
                 Err(e) => {
                     let err_pkt = self.error(&pkt, e);
 
-                    (true, Some(self.to_raw(&err_pkt)))
+                    (true, Some(err_pkt.to_raw(&self.passwd)))
                 }
             }
         }
@@ -1172,7 +1171,7 @@ mod test {
         };
         stun_pkt.put_fingerprint(fingerprint);
 
-        let payload = stun.to_raw(&stun_pkt);
+        let payload = stun_pkt.to_raw(&stun.passwd);
         println!("Payload: {:?}", payload);
 
         /* Parse STUN message from raw and check if parameters are correct */
