@@ -408,7 +408,7 @@ impl MessageIntegrity {
         // msg_len = size of msg up to attribute - header length + attribute
         // size (attribute header + hash size)
         let msg_len = raw.len() - DATA_OFFSET + 4 + 20;
-        BigEndian::write_u16(&mut raw[2..4], (msg_len as u16));
+        BigEndian::write_u16(&mut raw[2..4], msg_len as u16);
         // 3. Hash 2. using 1. as key
         let mhash = hmacsha1::hmac_sha1(ped.as_bytes(), &raw);
         // Sha computed doesn't match the expected, return error
