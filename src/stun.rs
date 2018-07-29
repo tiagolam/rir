@@ -12,10 +12,17 @@
 // |                                                               |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-// Disclaimer: This STUN approach is not supposed to cover all the cases. The case it is supposed
-// to cover is the following:
-// - When we are receiving ICE STUN checks multiplexed on the RTP port allocated to receive media.
-// Thus, consider this a semi-implementationon for this only.
+// Disclaimer: This is not a full implementation of STUN. Its supporting the
+// STUN usage as defined by rfc5245, for the ICE connectivity checks. Most
+// notably, the following is missing:
+// - Forming and sending any Binding Requests / Indications;
+// - Receiving and parsing Success or Error responses;
+// - Support for Long-Term Credential Mechanism;
+// - The FINGERPRINT attribute presence is mandatory;
+//
+// It is intended to support receiving ICE STUN connectivity checks (both
+// Binding Requests and Indications), parsing them appropriately and forming
+// and sending the responses.
 use std::str;
 use std::collections::HashMap;
 use std::net::SocketAddr;
