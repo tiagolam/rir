@@ -605,12 +605,19 @@ impl UnknownAttrs {
         }
     }
 
-    fn to_raw(attrs: &[u16]) -> Vec<u8> {
-        let mut raw_attr:Vec<u8> = vec![0; attrs.len()*2];
+    fn to_raw(&self) -> Vec<u8> {
+        let mut raw_attr:Vec<u8> = vec![0; self.attrs.len()*2];
 
-        for i in 0..attrs.len() {
-            BigEndian::write_u16(&mut raw_attr[i*2..], attrs[i]);
+        for i in 0..self.attrs.len() {
+            BigEndian::write_u16(&mut raw_attr[i*2..], self.attrs[i]);
         }
+
+        // Calculate (each attribute is 2 bytes) and append padding if needed
+        let mut padding = 0;
+        if self.attrs.len() % 2 != 0 {
+            padding = 2 - (self.attrs.len() % 2);
+        }
+        raw_attr.append(&mut vec![0; padding*2]);
 
         raw_attr
     }
@@ -757,7 +764,7 @@ impl StunPkt {
 
         let unkwn_attrs = self.get_unknown();
         if let Some(x) = unkwn_attrs {
-            let mut rattr = UnknownAttrs::to_raw(&x.attrs);
+            let mut rattr = x.to_raw();
             raw_pkt.append(&mut rattr);
 
             StunPkt::set_raw_hdr_len(&mut raw_pkt);
