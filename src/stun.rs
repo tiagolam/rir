@@ -647,6 +647,10 @@ impl StunPkt {
         }
     }
 
+    fn put_username(&mut self, attr: Username) {
+        self.attrs.insert(0x0006, Attr::Username(attr));
+    }
+
     fn get_message_integrity(&self) -> Option<&MessageIntegrity> {
         let attr = self.attrs.get(&0x0008);
         match attr {
