@@ -747,22 +747,6 @@ impl StunPkt {
             StunPkt::set_raw_hdr_len(&mut raw_pkt);
         }
 
-        let msg_itgt = self.get_message_integrity();
-        if let Some(x) = msg_itgt {
-            let mut rattr = x.to_raw(&mut raw_pkt, passwd);
-            raw_pkt.append(&mut rattr);
-
-            StunPkt::set_raw_hdr_len(&mut raw_pkt);
-        }
-
-        let fingerprint = self.get_fingerprint();
-        if let Some(x) = fingerprint {
-            let mut rattr = x.to_raw(&mut raw_pkt);
-            raw_pkt.append(&mut rattr);
-
-            StunPkt::set_raw_hdr_len(&mut raw_pkt);
-        }
-
         let error = self.get_error();
         if let Some(x) = error {
             let mut rattr = x.to_raw();
@@ -774,6 +758,22 @@ impl StunPkt {
         let unkwn_attrs = self.get_unknown();
         if let Some(x) = unkwn_attrs {
             let mut rattr = UnknownAttrs::to_raw(&x.attrs);
+            raw_pkt.append(&mut rattr);
+
+            StunPkt::set_raw_hdr_len(&mut raw_pkt);
+        }
+
+        let msg_itgt = self.get_message_integrity();
+        if let Some(x) = msg_itgt {
+            let mut rattr = x.to_raw(&mut raw_pkt, passwd);
+            raw_pkt.append(&mut rattr);
+
+            StunPkt::set_raw_hdr_len(&mut raw_pkt);
+        }
+
+        let fingerprint = self.get_fingerprint();
+        if let Some(x) = fingerprint {
+            let mut rattr = x.to_raw(&mut raw_pkt);
             raw_pkt.append(&mut rattr);
 
             StunPkt::set_raw_hdr_len(&mut raw_pkt);
