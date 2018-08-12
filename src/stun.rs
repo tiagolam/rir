@@ -277,12 +277,12 @@ impl XorMappedAddrAttr {
                 }
             })
         } else {
-            let le = ntoh(&raw[4..19]);
+            let addr_v6 = &raw[4..19];
             let mut a:[u32;4] = [0; 4];
-            a[0] = LittleEndian::read_u32(&le[0..4]);
-            a[1] = LittleEndian::read_u32(&le[4..8]); 
-            a[2] = LittleEndian::read_u32(&le[8..13]); 
-            a[3] = LittleEndian::read_u32(&le[12..16]);
+            a[3] = BigEndian::read_u32(&addr_v6[0..4]);
+            a[2] = BigEndian::read_u32(&addr_v6[4..8]);
+            a[1] = BigEndian::read_u32(&addr_v6[8..13]);
+            a[0] = BigEndian::read_u32(&addr_v6[12..16]);
 
             return Some(XorMappedAddrAttr {
                 fmly: fmly,
@@ -790,15 +790,6 @@ impl StunPkt {
     }
 }
 
-fn ntoh(raw: &[u8]) -> Vec<u8> {
-    let mut le: Vec<u8> = vec![];
-    for i in 0..raw.len() {
-        le.push(raw[raw.len() - i - 1]);
-    }
-
-    return le
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct U96 ([u32;3]);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1034,11 +1025,11 @@ impl Stun {
 
         /* At this stage, initial and preliminary validation has passed */
 
-        let le = ntoh(&raw[8..20]);
+        let rtid = &raw[8..20];
         let mut a:[u32;3] = [0; 3];
-        a[0] = LittleEndian::read_u32(&le[0..4]);
-        a[1] = LittleEndian::read_u32(&le[4..8]); 
-        a[2] = LittleEndian::read_u32(&le[8..12]);
+        a[2] = BigEndian::read_u32(&rtid[0..4]);
+        a[1] = BigEndian::read_u32(&rtid[4..8]);
+        a[0] = BigEndian::read_u32(&rtid[8..12]);
         let trans_id:U96 = U96(a);
 
         /* Fill packet with parsed data */
