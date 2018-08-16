@@ -1048,13 +1048,14 @@ impl Stun {
         Some(pkt)
     }
 
-    pub fn process_stun(&self, raw: &[u8]) -> (bool, Option<Vec<u8>>) {
+    fn process_stun_(&self, raw: &[u8]) -> (bool, Option<StunPkt>) {
         let pkt = self.parse_stun(raw);
         if pkt.is_none() {
             return (false, None)
         }
 
         let pkt = pkt.unwrap();
+
         if !pkt.is_valid() {
             return (false, None)
         }
@@ -1075,21 +1076,30 @@ impl Stun {
             if let Err(e) = res {
                 let err_pkt = self.error(&pkt, e);
 
-                return (true, Some(err_pkt.to_raw(&self.passwd)))
+                return (true, Some(err_pkt))
             }
 
             match self.val_unknown_attrs(&pkt) {
                 Ok(_) => {
                     let succ_pkt = self.success(&pkt);
 
-                    (true, Some(succ_pkt.to_raw(&self.passwd)))
+                    (true, Some(succ_pkt))
                 },
                 Err(e) => {
                     let err_pkt = self.error(&pkt, e);
 
-                    (true, Some(err_pkt.to_raw(&self.passwd)))
+                    (true, Some(err_pkt))
                 }
             }
+        }
+    }
+
+    pub fn process_stun(&self, raw: &[u8]) -> (bool, Option<Vec<u8>>) {
+        let (is_stun, pkt) = self.process_stun_(raw);
+
+        match pkt {
+            Some(e) => (is_stun, Some(e.to_raw(&self.passwd))),
+            None => (is_stun, None)
         }
     }
 }
@@ -1136,6 +1146,58 @@ mod test {
         0xce, 0x12, 0xa6, 0xa2
     ];
 
+    fn finish_stun(pkt: &mut StunPkt) {
+        let msg_itgt = MessageIntegrity {
+            hash: [0; 20],
+            raw_up_to: Vec::new(),
+        };
+        pkt.put_message_integrity(msg_itgt);
+
+        let fingerprint = Fingerprint {
+            fingerprint: 0,
+            raw_up_to: Vec::new(),
+        };
+        pkt.put_fingerprint(fingerprint);
+    }
+
+    fn start_stun_request() -> StunPkt {
+        let mut stun_pkt = StunPkt {
+            msg_mt: MsgMethod::Binding,
+            msg_cl: MsgClass::Request,
+            msg_len: 0,
+            trans_id: U96([0; 3]),
+            attrs: HashMap::new(),
+        };
+
+        /* Insert attributes manually, as to simulate when success() method in
+         * Stun inserts the attributes expected for a successfull response */
+
+        let mapped_addr = XorMappedAddrAttr {
+                fmly: 1, /* v4 */
+                port: 6000, /* 6000 */
+                addr: Addr {
+                    v4: 167772161 /* 10.0.0.1 */
+                },
+        };
+        stun_pkt.put_xor_mapped_addr(mapped_addr);
+
+        let username = Username {
+            username: "test1".to_string(),
+        };
+        stun_pkt.put_username(username);
+
+        finish_stun(&mut stun_pkt);
+
+        stun_pkt
+    }
+
+    fn compose_simple_stun_request() -> StunPkt {
+        let mut pkt = start_stun_request();
+
+        finish_stun(&mut pkt);
+
+        pkt
+    }
 
     #[test]
     fn test_parse_raw_msg_to_stun_request() {
@@ -1200,5 +1262,130 @@ mod test {
         for i in 0..payload.len() {
             assert_eq!(payload[i], SUCSS_RAW[i])
         }
+    }
+
+    #[test]
+    fn test_process_stun_request_unknown_attribute() {
+        let lsock = "10.0.0.1:6000".parse()
+                    .expect("Unable to parse socket address");
+        let stun = Stun::new("T0teqPLNQQOf+5W+ls+P2p16", lsock);
+
+        // Compose STUN request to then be parsed to raw payload
+
+        let mut pkt = start_stun_request();
+
+        // Insert an UNKNOWN-ATTRIBUTE manually
+        let attrs: Vec<u16> = vec![4];
+        pkt.attrs.insert(0x000a, Attr::UnknownAttrs(UnknownAttrs{
+            attrs: attrs}));
+
+        finish_stun(&mut pkt);
+
+        let payload = pkt.to_raw(&stun.passwd);
+
+        // Parse STUN message from raw and check expected parameters
+
+        let (is_stun, parsed_pkt) = stun.process_stun_(&payload);
+
+        assert!(is_stun);
+        assert!(parsed_pkt.is_some());
+
+        let parsed_pkt = parsed_pkt.unwrap();
+
+        assert_eq!(parsed_pkt.msg_mt, MsgMethod::Binding);
+        assert_eq!(parsed_pkt.msg_cl, MsgClass::Error);
+        assert_eq!(parsed_pkt.trans_id, pkt.trans_id);
+        // Should have 2 attributes - Error and Unknown Attribute
+        assert_eq!(parsed_pkt.attrs.len(), 2);
+        // Should have Error with 420
+        let error = parsed_pkt.get_error();
+        assert!(error.is_some());
+        let error = error.unwrap();
+        assert_eq!(error.class, 4);
+        assert_eq!(error.number, 20);
+        assert!(parsed_pkt.get_unknown().is_some());
+    }
+
+    #[test]
+    fn test_process_stun_request_no_msg_integrity() {
+        let lsock = "10.0.0.1:6000".parse()
+                    .expect("Unable to parse socket address");
+        let stun = Stun::new("T0teqPLNQQOf+5W+ls+P2p16", lsock);
+
+        let mut pkt = compose_simple_stun_request();
+        // Remove MESSAGE-INTEGRITY attribute
+        pkt.attrs.remove(&0x0008);
+
+        let payload = pkt.to_raw(&stun.passwd);
+
+        // Parse STUN message from raw and check if parameters are correct
+
+        let (is_stun, parsed_pkt) = stun.process_stun_(&payload);
+
+        assert!(is_stun);
+        assert!(parsed_pkt.is_some());
+
+        let parsed_pkt = parsed_pkt.unwrap();
+
+        assert_eq!(parsed_pkt.msg_mt, MsgMethod::Binding);
+        assert_eq!(parsed_pkt.msg_cl, MsgClass::Error);
+        assert_eq!(pkt.trans_id, parsed_pkt.trans_id);
+        // Should have Error with 400
+        let error = parsed_pkt.get_error();
+        assert!(error.is_some());
+        let error = error.unwrap();
+
+        assert_eq!(error.class, 4);
+        assert_eq!(error.number, 0);
+    }
+
+    #[test]
+    fn test_process_stun_request_bad_msg_integrity() {
+        let lsock = "10.0.0.1:6000".parse()
+                    .expect("Unable to parse socket address");
+        let stun = Stun::new("T0teqPLNQQOf+5W+ls+P2p16", lsock);
+
+        let pkt = compose_simple_stun_request();
+
+        let mut payload = pkt.to_raw(&stun.passwd);
+
+        // 1. Remove FINGERPRINT and adjust STUN header's msg_len
+        payload = payload[0..payload.len() - 8].to_vec();
+        StunPkt::set_raw_hdr_len(&mut payload);
+
+        // 2. Mangle MESSAGE-INTEGRITY attribute value
+        let plen = payload.len();
+        payload[plen - 1] = 0x66;
+
+        // 3. Re-calculate FINGERPRINT
+        let fingerprint = Fingerprint {
+            fingerprint: 0,
+            raw_up_to: payload[0..payload.len() - 8].to_vec(),
+        };
+        let mut rattr = fingerprint.to_raw(&mut payload);
+
+        // 4. Insert new FINGERPRINT and adjust STUN header's msg_len
+        payload.append(&mut rattr);
+        StunPkt::set_raw_hdr_len(&mut payload);
+
+        // Parse STUN message from raw and check if parameters are correct
+
+        let (is_stun, parsed_pkt) = stun.process_stun_(&payload);
+
+        assert!(is_stun);
+        assert!(parsed_pkt.is_some());
+
+        let parsed_pkt = parsed_pkt.unwrap();
+
+        assert_eq!(parsed_pkt.msg_mt, MsgMethod::Binding);
+        assert_eq!(parsed_pkt.msg_cl, MsgClass::Error);
+        assert_eq!(pkt.trans_id, parsed_pkt.trans_id);
+        // Should have Error with 401
+        let error = parsed_pkt.get_error();
+        assert!(error.is_some());
+        let error = error.unwrap();
+
+        assert_eq!(error.class, 4);
+        assert_eq!(error.number, 1);
     }
 }
