@@ -210,9 +210,9 @@ struct StunWrapper {
 }
 
 impl StunWrapper {
-    fn new(transport: UdpTransport, passwd: &str, handler: RtpHandler) -> StunWrapper {
+    fn new(transport: UdpTransport, user: &str, passwd: &str, handler: RtpHandler) -> StunWrapper {
         let laddr = transport.local_socket.read().unwrap().local_addr().ok();
-        let stun = Stun::new(passwd, laddr.unwrap());
+        let stun = Stun::new(user, passwd, laddr.unwrap());
 
         StunWrapper {
             stun: stun,
@@ -837,14 +837,14 @@ impl RtpSession {
         *rsock = new_addr;
     }
 
-    pub fn connect_to(rtp_addr: SocketAddr, rtcp_addr: SocketAddr, socket_addr: SocketAddr, rtp_cb: Box<RirHandler + Send + Sync>, rtcp_cb: Box<RirHandler + Send + Sync>, passwd: &str) -> RtpSession {
+    pub fn connect_to(rtp_addr: SocketAddr, rtcp_addr: SocketAddr, socket_addr: SocketAddr, rtp_cb: Box<RirHandler + Send + Sync>, rtcp_cb: Box<RirHandler + Send + Sync>, user: &str, passwd: &str) -> RtpSession {
         debug!("Setting up STUN for RTP {}:{}", rtp_addr.ip(), rtp_addr.port());
 
         let rtp_conn = UdpSocket::bind(rtp_addr).unwrap();
 
         // Build transport based on
         let transport = UdpTransport::new(rtp_conn, socket_addr);
-        let stun_wrapper = StunWrapper::new(transport, passwd, RtpHandler::new(rtp_cb));
+        let stun_wrapper = StunWrapper::new(transport, user, passwd, RtpHandler::new(rtp_cb));
 
         debug!("Setting up STUN for RTCP {}:{}", rtcp_addr.ip(), rtcp_addr.port());
 
@@ -856,7 +856,7 @@ impl RtpSession {
         let rtcp_conn = UdpSocket::bind(rtcp_addr).unwrap();
 
         let rtcp_transport = UdpTransport::new(rtcp_conn, rem_socket);
-        let rtcp_wrapper = StunWrapper::new(rtcp_transport, passwd, RtpHandler::new(rtcp_cb));
+        let rtcp_wrapper = StunWrapper::new(rtcp_transport, user, passwd, RtpHandler::new(rtcp_cb));
 
         RtpSession {
             rtcp_stream: RtcpStream::new(rtcp_wrapper),
