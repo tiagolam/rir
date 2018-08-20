@@ -310,8 +310,6 @@ impl XorMappedAddrAttr {
     }
 }
 
-/* TODO(tlam): Support SASLprep (can we use Rust's stringprep crate?) */
-/* Seems so, as they have a saslprep function */
 struct Username {
     username: String,
 }
@@ -325,32 +323,46 @@ impl Username {
             Err(e) => panic!("Invalid UTF-8 sequence: {:?} {}", raw, e),
         };
 
+        // SASLprep validate username
+        let prep_user = stringprep::saslprep(username);
+        if prep_user.is_err() {
+            return None
+        }
+        let prep_user = prep_user.unwrap().into_owned();
+
         /* Mandatory per rfc5389 */
-        if username.len() >= 513 {
+        if prep_user.len() >= 513 {
             return None
         }
 
         return Some(Username {
-            username: username.to_owned(),
+            username: prep_user,
         })
     }
 
     fn to_raw(&self) -> Vec<u8> {
+        // SASLprep process username
+        let prep_user = stringprep::saslprep(&self.username);
+        if prep_user.is_err() {
+            return vec![0;1]
+        }
+        let prep_user = prep_user.unwrap().into_owned();
+
         let attr_len;
         let padding;
-        if self.username.len() % 4 == 0 {
+        if prep_user.len() % 4 == 0 {
             padding = 0;
-            attr_len = self.username.len();
+            attr_len = prep_user.len();
         } else {
-            padding = 4 - (self.username.len() % 4);
-            attr_len = self.username.len() + padding;
+            padding = 4 - (prep_user.len() % 4);
+            attr_len = prep_user.len() + padding;
         }
 
         let mut raw_attr: Vec<u8> = vec![0; 4];
 
         BigEndian::write_u16(&mut raw_attr[0..], 0x0006);
         BigEndian::write_u16(&mut raw_attr[2..], (attr_len-padding) as u16);
-        raw_attr.append(&mut self.username.to_owned().into_bytes());
+        raw_attr.append(&mut prep_user.into_bytes());
         raw_attr.append(&mut vec![0;padding]);
 
         raw_attr
