@@ -594,8 +594,23 @@ impl ErrorAttr {
         return ErrorAttr {
             class: (err.code / 100) as u8,
             number: (err.code % 100) as u8,
-            reason: "".to_owned(),
+            reason: ErrorAttr::error_phrase(err.code),
         }
+    }
+
+    fn error_phrase(code: u16) -> String {
+        let phrase = match code {
+            400 => "Bad Request: The request was malformed.",
+            401 => "Unauthorized: The request did not contain the correct \
+                    credentials to proceed.",
+            420 => "Unknown Attribute: The server received a STUN packet \
+                    containing a comprehension-required attribute that it did \
+                    not understand.",
+            500 | _ => "Server Error: The server has suffered a temporary \
+                        error.",
+        };
+
+        return phrase.to_owned()
     }
 
     fn to_raw(&self) -> Vec<u8> {
@@ -605,6 +620,13 @@ impl ErrorAttr {
         raw_attr.push(cl);
         raw_attr.push(self.number);
         raw_attr.extend_from_slice(self.reason.as_bytes());
+
+        // Calculate and append padding if needed
+        let mut padding = 0;
+        if self.reason.len() % 4 != 0 {
+            padding = 4 - (self.reason.len() % 4);
+        }
+        raw_attr.append(&mut vec![0; padding]);
 
         raw_attr
     }
