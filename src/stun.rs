@@ -378,27 +378,27 @@ struct MessageIntegrity {
     raw_up_to: Vec<u8>,
 }
 
-/// Attribute that validates STUN message by (as per rfc5389):
-/// 1. Get all STUN message (including header);
-/// 2. Commpute key by:
-///     MD5(username ":" realm ":" SASLprep(password))
+/// Attribute that validates a STUN message by (as per #rfc5389):
+/// 1. Get all STUN message up to and including the attribute (including
+///    header);
+/// 2. Compute the key by using the short-term credentials (per #rfc5245):
+///     SASLprep(password)
 /// 3. Use 1. as input for hmac function and 2. as key.
 impl MessageIntegrity {
     fn from_raw(rattr: RawAttr) -> Option<MessageIntegrity> {
         let raw_attr = &rattr.attr_raw;
-        /* Per rfc5389, SHA1 is 20 bytes thus this field should so too  */
+        // Per #rfc5389, SHA1 is 20 bytes
         if raw_attr.len() != 20 {
             return None
         }
 
-        /* match_on_short_cred needs to change the length of the message in order to mimmic what
-         * was done on the other side. Thus, we need to own the data here */
+        // The hash is done over the entire message up to and including the
+        // attribute. Thus, we store the data up to the attribute so later
+        // validation can act on the data
         let mut raw = vec![0; rattr.precd_msg.len()];
         raw.copy_from_slice(rattr.precd_msg);
-        /*if !MessageIntegrity::match_on_short_cred(raw_attr, raw, passwd) {
-            return None
-        }*/
 
+        // Copy the hash from the raw attribute
         let mut hash:[u8;20] = [0;20];
         for (x, y) in raw_attr.iter().zip(hash.iter_mut()) {
             *y = *x;
@@ -410,8 +410,8 @@ impl MessageIntegrity {
         })
     }
 
-    // Validate MessageIntegraty attribute, using the short term
-    // credentials method:
+    // Verify the MessageIntegraty attribute, using the short-term credentials.
+    // Returns 'true' if the expected hash is computed, or 'false' otherwise.
     pub fn match_on_short_cred(&self, passwd: &str) -> bool {
         // 1. Get password and SASLprep(password);
         let ped = stringprep::saslprep(passwd);
@@ -419,12 +419,14 @@ impl MessageIntegrity {
             return false
         }
         let ped = ped.unwrap().into_owned();
-        // 2. Modify messasge len to point to MessageIntegrity's end
+
+        // 2. Modify the message len to point to MessageIntegrity's end
         let mut raw = self.raw_up_to.clone();
         // msg_len = size of msg up to attribute - header length + attribute
         // size (attribute header + hash size)
         let msg_len = raw.len() - DATA_OFFSET + 4 + 20;
         BigEndian::write_u16(&mut raw[2..4], msg_len as u16);
+
         // 3. Hash 2. using 1. as key
         let mhash = hmacsha1::hmac_sha1(ped.as_bytes(), &raw);
         // Sha computed doesn't match the expected, return error
@@ -441,10 +443,12 @@ impl MessageIntegrity {
             return vec![0;1]
         }
         let ped = ped.unwrap().into_owned();
+
         // 2. Modify message len to point to MessageIntegrity's end
         let msg_len:u16 = BigEndian::read_u16(&raw[2..4]);
         // msg_len = size of message + size of attribute header + hash size
         BigEndian::write_u16(&mut raw[2..4], msg_len + 4 + 20);
+
         // 3. Hash 2. using 1. as key
         let hash = hmacsha1::hmac_sha1(ped.as_bytes(), &raw);
 
