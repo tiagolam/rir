@@ -1103,7 +1103,6 @@ pub fn pkt_rtcp_to_udp_payload(pkt: &RtcpPkt) -> [u8; 1500] {
 }
 
 pub fn parse_rtcp_pkt(pkt: &[u8], rtcp_pkt: &mut RtcpPkt) {
-
     let mut version:u8 = pkt[0] & 0xC0;
     version >>= 6;
     let mut padding:u8 = pkt[0] & 0x20;
@@ -1133,19 +1132,23 @@ pub fn parse_rtcp_pkt(pkt: &[u8], rtcp_pkt: &mut RtcpPkt) {
         let pkt = &pkt[8..];
     }
 
-    //let mut csrc = [0u32, rc as u32];
     let mut csrc = vec![];
     {
         for i in 0..rc as usize {
-            let index = i*24;
-            let ssrc = BigEndian::read_u32(&[pkt[index]]);
+            let mut index = i*24;
+            let ssrc = BigEndian::read_u32(&pkt[index..index + 4]);
             let fraction_lost:u8 = pkt[index + 4];
-            let mut sum_nr_packets_lost:u32 = BigEndian::read_u32(&[pkt[index + 4]]);
+            index += 4;
+            let mut sum_nr_packets_lost:u32 = BigEndian::read_u32(&pkt[index..index + 4]);
             sum_nr_packets_lost &= 0x00FFFFFF;
-            let ext_seq_number = BigEndian::read_u32(&[pkt[index + 8]]);
-            let jitter = BigEndian::read_u32(&[pkt[index + 12]]);
-            let last_sr = BigEndian::read_u32(&[pkt[index + 16]]);
-            let delay_last_sr = BigEndian::read_u32(&[pkt[index + 20]]);
+            index += 4;
+            let ext_seq_number = BigEndian::read_u32(&pkt[index..index + 4]);
+            index += 4;
+            let jitter = BigEndian::read_u32(&pkt[index..index + 4]);
+            index += 4;
+            let last_sr = BigEndian::read_u32(&pkt[index..index + 4]);
+            index += 4;
+            let delay_last_sr = BigEndian::read_u32(&pkt[index..index + 4]);
 
             let report = ReportBlock {
                 ssrc: ssrc,
@@ -1170,7 +1173,7 @@ pub fn parse_rtcp_pkt(pkt: &[u8], rtcp_pkt: &mut RtcpPkt) {
     rtcp_pkt.header.ssrc = ssrc;
     rtcp_pkt.report_blocks = csrc;
 
-     // TODO(tlam): Use enums here, don't be stupid.
+    // TODO(tlam): Use enums here, don't be stupid.
     if payload_type == 200 {
         rtcp_pkt.sender_info = Some(SenderInfo {
             ntp_timestamp_msw: ntp_timestamp_msw,
