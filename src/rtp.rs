@@ -866,6 +866,30 @@ impl RtpSession {
         self.rtcp_stream.transport.set_remote(new_addr);
     }
 
+    pub fn connect_to_simple(rtp_addr: SocketAddr, rtcp_addr: SocketAddr, socket_addr: SocketAddr) -> RtpSession {
+        debug!("Setting up RTP {}:{}", rtp_addr.ip(), rtp_addr.port());
+
+        let rtp_conn = UdpSocket::bind(rtp_addr).unwrap();
+
+        // Build transport based on
+        let transport = UdpTransport::new(rtp_conn, socket_addr);
+
+        debug!("Setting up RTCP {}:{}", rtcp_addr.ip(), rtcp_addr.port());
+
+        // TODO(tlam): Should we be assuming port+1 for RTCP initially?
+        let socket_ip = socket_addr.ip();
+        let socket_port = socket_addr.port() + 1;
+        let rem_socket = SocketAddr::new(socket_ip, socket_port);
+
+        let rtcp_conn = UdpSocket::bind(rtcp_addr).unwrap();
+        let rtcp_transport = UdpTransport::new(rtcp_conn, rem_socket);
+
+        RtpSession {
+            rtcp_stream: RtcpStream::new(Box::new(rtcp_transport)),
+            transport: Box::new(transport),
+        }
+    }
+
     pub fn connect_to(rtp_addr: SocketAddr, rtcp_addr: SocketAddr, socket_addr: SocketAddr, rtp_cb: Box<RirHandler + Send + Sync>, rtcp_cb: Box<RirHandler + Send + Sync>, user: &str, passwd: &str) -> RtpSession {
         debug!("Setting up STUN for RTP {}:{}", rtp_addr.ip(), rtp_addr.port());
 
