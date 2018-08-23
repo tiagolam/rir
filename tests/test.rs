@@ -18,14 +18,14 @@ fn test_sending() {
 
     // Set up the local socket
     let local_addr =  FromStr::from_str("127.0.0.1").unwrap();
-    let bind_socket = SocketAddr::new(local_addr, 0);
-    let conn = UdpSocket::bind(bind_socket);
+    let rtp_socket = SocketAddr::new(local_addr, 0);
+    let rtcp_socket = SocketAddr::new(local_addr, 0);
 
     log4rs::init_file("config/log4rs.yaml", Default::default()).unwrap();
     info!("Running the send only test...");
 
     // Change 32000 port to point to the RTP port on the receiving side
-    let rtp_stream = RtpSession::connect_to(conn.unwrap(), SocketAddr::new(local_addr, 32000));
+    let rtp_stream = RtpSession::connect_to_simple(rtp_socket, rtcp_socket, SocketAddr::new(local_addr, 32000));
 
     let v = vec![];
 
@@ -79,13 +79,13 @@ fn test_receiving() {
 
     // Set up the local socket
     let local_addr =  FromStr::from_str("127.0.0.1").unwrap();
-    let bind_socket = SocketAddr::new(local_addr, 0);
-    let conn = UdpSocket::bind(bind_socket);
+    let rtp_socket = SocketAddr::new(local_addr, 0);
+    let rtcp_socket = SocketAddr::new(local_addr, 0);
 
     log4rs::init_file("config/log4rs.yaml", Default::default()).unwrap();
     info!("Firing up!...");
 
-    let rtp_stream = RtpSession::connect_to(conn.unwrap(), SocketAddr::new(local_addr, 32000));
+    let rtp_stream = RtpSession::connect_to_simple(rtp_socket, rtcp_socket, SocketAddr::new(local_addr, 32000));
 
     let rtp_pkt = &mut RtpPkt {
         header: RtpHeader {
@@ -107,4 +107,3 @@ fn test_receiving() {
         rtp_stream.read(rtp_pkt);
     }
 }
-
