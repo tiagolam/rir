@@ -27,7 +27,7 @@ use std::str;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
-use byteorder::{ByteOrder, BigEndian, LittleEndian};
+use byteorder::{ByteOrder, BigEndian};
 use stringprep;
 use crc::crc32;
 use hmacsha1;
@@ -946,7 +946,7 @@ impl Stun {
 
         // FINGERPRINT is only used if the request had it
         let fingerprint = packet.get_fingerprint();
-        if let Some(x) = fingerprint {
+        if let Some(_x) = fingerprint {
             let resp_fingerprint = Fingerprint {
                 fingerprint: 0,
                 raw_up_to: Vec::new(),
@@ -1037,7 +1037,7 @@ impl Stun {
             // TODO(tlam): Deal with error
             let attr = match attr {
                 Ok(val)  => Some(val),
-                Err(err) => None,
+                Err(_err) => None,
             };
 
             if attr.is_some() {
