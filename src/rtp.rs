@@ -51,7 +51,7 @@ pub struct RtpPkt {
 // TODO(tlam): Abstract away from UdpSocket, since the RFC doesn't tie to any
 // transport protocol (such as UDP)
 pub struct RtpSession {
-    transport: StunWrapper,
+    transport: Box<Transport + Sync + Send>,
     rtcp_stream: RtcpStream,
     //handler: Box<RirHandler + Send>
 }
@@ -161,15 +161,36 @@ impl SourceState {
     }
 }
 
-trait Transport {
+trait TransportClone {
+    fn clone_box(&self) -> Box<Transport + Sync + Send>;
+}
+
+impl<T> TransportClone for T
+where
+    T: 'static + Transport + Clone + Sync + Send,
+{
+    fn clone_box(&self) -> Box<Transport + Sync + Send> {
+        Box::new(self.clone())
+    }
+}
+
+trait Transport: TransportClone {
     fn recv(&self, payload: &mut [u8]) -> (usize, Option<SocketAddr>);
 
     fn send(&self, payload: &[u8]) -> usize;
+
+    fn set_remote(&self, rem_sock: SocketAddr);
+}
+
+impl Clone for Box<Transport + Sync + Send> {
+    fn clone(&self) -> Box<Transport + Sync + Send> {
+        self.clone_box()
+    }
 }
 
 #[derive(Clone)]
 struct UdpTransport {
-     // RTCP stream socket connection
+    // RTCP stream socket connection
     local_socket: Arc<RwLock<UdpSocket>>,
     // RTCP stream dest socket connection
     rem_socket: Arc<RwLock<SocketAddr>>,
@@ -198,6 +219,11 @@ impl Transport for UdpTransport {
         let size = lsock.send_to(payload, *(self.rem_socket.read().unwrap())).unwrap();
 
         size
+    }
+
+    fn set_remote(&self, rem_sock: SocketAddr) {
+        let mut rsock = self.rem_socket.write().unwrap();
+        *rsock = rem_sock;
     }
 }
 
@@ -255,6 +281,11 @@ impl Transport for StunWrapper {
     fn send(&self, payload: &[u8]) -> usize {
         self.transport.send(payload)
     }
+
+    fn set_remote(&self, rem_sock: SocketAddr) {
+        let mut rsock = self.transport.rem_socket.write().unwrap();
+        *rsock = rem_sock;
+    }
 }
 
 // TODO(tlam): Do we need a separate count for the members from the one
@@ -262,7 +293,7 @@ impl Transport for StunWrapper {
 #[derive(Clone)]
 pub struct RtcpStream {
     // RTCP stream socket connection
-    transport: StunWrapper,
+    transport: Box<Transport + Sync + Send>,
     // Last time an RTPC packet was transmitted
     tp: Arc<Mutex<u64>>,
     // Current time
@@ -301,7 +332,7 @@ pub struct RtcpStream {
 }
 
 impl RtcpStream {
-    fn new(transport: StunWrapper) -> RtcpStream {
+    fn new(transport: Box<Transport + Sync + Send>) -> RtcpStream {
         let rtcp_stream = RtcpStream {
             transport: transport,
             tp: Arc::new(Mutex::new(0)),
@@ -828,13 +859,11 @@ pub trait RirHandler {
 
 impl RtpSession {
     pub fn change_transport(&self, new_addr: SocketAddr) {
-        let mut rsock = self.transport.transport.rem_socket.write().unwrap();
-        *rsock = new_addr;
+        self.transport.set_remote(new_addr);
     }
 
     pub fn change_rtcp_transport(&self, new_addr: SocketAddr) {
-        let mut rsock = self.rtcp_stream.transport.transport.rem_socket.write().unwrap();
-        *rsock = new_addr;
+        self.rtcp_stream.transport.set_remote(new_addr);
     }
 
     pub fn connect_to(rtp_addr: SocketAddr, rtcp_addr: SocketAddr, socket_addr: SocketAddr, rtp_cb: Box<RirHandler + Send + Sync>, rtcp_cb: Box<RirHandler + Send + Sync>, user: &str, passwd: &str) -> RtpSession {
@@ -859,8 +888,8 @@ impl RtpSession {
         let rtcp_wrapper = StunWrapper::new(rtcp_transport, user, passwd, RtpHandler::new(rtcp_cb));
 
         RtpSession {
-            rtcp_stream: RtcpStream::new(rtcp_wrapper),
-            transport: stun_wrapper,
+            rtcp_stream: RtcpStream::new(Box::new(rtcp_wrapper)),
+            transport: Box::new(stun_wrapper),
         }
     }
 
