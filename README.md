@@ -12,3 +12,9 @@ The implementation has been based around RFC 3550. Implementation of some of the
 
 Since this is still just a PoC, and there's a lot of Rust learning going on at the moment, the architecture is still being defined.
 
+License
+-------
+
+This library is released under the Apache License 2.0.
+
+See the [LICENSE](LICENSE.txt) file for full license information.
